@@ -30,11 +30,12 @@ let webcamStream = null;
 let isRunning = false;
 let rafId = null;
 let lastVideoTime = -1;
-let lastSpawnAt = 0;
 let fistStartAt = null;
 let selectedShape = null;
 let isTransformPinching = false;
-const spawnCooldownMs = 420;
+let prevPinch = false;
+let smoothedCursorWorld = null;
+const maxShapes = 300;
 const placedShapes = [];
 
 // --- Three.js world ---
@@ -67,6 +68,10 @@ const ground = new THREE.Mesh(
 ground.rotation.x = -Math.PI / 2;
 ground.position.y = -0.01;
 scene.add(ground);
+
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
 function resizeStage() {
   const w = worldMount.clientWidth;
@@ -181,12 +186,31 @@ function drawHands(results) {
   });
 }
 
-function handToWorldPoint(hand) {
-  const indexTip = hand[8];
-  const x = (0.5 - indexTip.x) * 10;
-  const z = (indexTip.y - 0.5) * 9;
-  const y = 0.4 + Math.max(0, Math.min(2.3, (0.5 - indexTip.z) * 1.8));
-  return new THREE.Vector3(x, y, z);
+function drawCursor(landmark, color = "#f9ff9a") {
+  const x = (1 - landmark.x) * overlayEl.width;
+  const y = landmark.y * overlayEl.height;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(x, y, 9, 0, 2 * Math.PI);
+  ctx.stroke();
+}
+
+function screenToWorldOnPlane(landmark, plane = groundPlane) {
+  ndc.set((1 - landmark.x) * 2 - 1, -(landmark.y * 2 - 1));
+  raycaster.setFromCamera(ndc, camera);
+  const hit = new THREE.Vector3();
+  const hasHit = raycaster.ray.intersectPlane(plane, hit);
+  return hasHit ? hit : null;
+}
+
+function smoothWorldPoint(point) {
+  if (!smoothedCursorWorld) {
+    smoothedCursorWorld = point.clone();
+  } else {
+    smoothedCursorWorld.lerp(point, 0.42);
+  }
+  return smoothedCursorWorld.clone();
 }
 
 function isPinching(hand) {
@@ -196,7 +220,7 @@ function isPinching(hand) {
   const dy = thumb.y - index.y;
   const dz = thumb.z - index.z;
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-  return dist < 0.055;
+  return dist < 0.05;
 }
 
 function isFist(hand) {
@@ -213,15 +237,11 @@ function isFist(hand) {
 
 function buildGeometry(type, size) {
   switch (type) {
-    case "cuboid":
-      return new THREE.BoxGeometry(size * 1.6, size, size * 0.9);
-    case "sphere":
-      return new THREE.SphereGeometry(size * 0.6, 28, 20);
-    case "cylinder":
-      return new THREE.CylinderGeometry(size * 0.45, size * 0.45, size * 1.4, 24);
+    case "cuboid": return new THREE.BoxGeometry(size * 1.6, size, size * 0.9);
+    case "sphere": return new THREE.SphereGeometry(size * 0.6, 28, 20);
+    case "cylinder": return new THREE.CylinderGeometry(size * 0.45, size * 0.45, size * 1.4, 24);
     case "cube":
-    default:
-      return new THREE.BoxGeometry(size, size, size);
+    default: return new THREE.BoxGeometry(size, size, size);
   }
 }
 
@@ -230,31 +250,35 @@ function inferShapeTypeFromGeometry(geometry) {
   if (geometry.type === "CylinderGeometry") return "cylinder";
   if (geometry.type === "BoxGeometry") {
     const p = geometry.parameters || {};
-    if (Math.abs((p.width || 1) - (p.height || 1)) < 0.001 && Math.abs((p.height || 1) - (p.depth || 1)) < 0.001) {
-      return "cube";
-    }
+    if (Math.abs((p.width || 1) - (p.height || 1)) < 0.001 && Math.abs((p.height || 1) - (p.depth || 1)) < 0.001) return "cube";
     return "cuboid";
   }
   return "cube";
 }
 
-function spawnShape(hand) {
-  const now = performance.now();
-  if (now - lastSpawnAt < spawnCooldownMs) return;
-  lastSpawnAt = now;
+function placeMeshAtGround(mesh, worldPoint) {
+  const bbox = new THREE.Box3().setFromObject(mesh);
+  const halfHeight = (bbox.max.y - bbox.min.y) / 2;
+  mesh.position.set(worldPoint.x, halfHeight, worldPoint.z);
+}
+
+function spawnShapeAtWorld(worldPoint) {
+  if (!worldPoint) return;
+  if (placedShapes.length >= maxShapes) {
+    setStatus(`Shape limit reached (${maxShapes})`, "error");
+    return;
+  }
 
   const size = Number(sizeInputEl.value);
   const type = shapeTypeEl.value;
   const geometry = buildGeometry(type, size);
-  const material = new THREE.MeshStandardMaterial({
-    color: colorInputEl.value,
-    roughness: 0.46,
-    metalness: 0.2,
-  });
-
+  const material = new THREE.MeshStandardMaterial({ color: colorInputEl.value, roughness: 0.46, metalness: 0.2 });
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.copy(handToWorldPoint(hand));
-  mesh.rotation.set(Math.random() * 0.3, Math.random() * Math.PI, Math.random() * 0.3);
+
+  placeMeshAtGround(mesh, worldPoint);
+  mesh.rotation.set(0, Math.random() * Math.PI, 0);
+  mesh.userData.baseSize = size;
+  mesh.userData.shapeType = type;
 
   placedShapes.push(mesh);
   scene.add(mesh);
@@ -271,7 +295,7 @@ function undoLastShape() {
   setStatus(`Removed last shape. Remaining: ${placedShapes.length}`, "ok");
 }
 
-function pickNearestShape(point, maxDistance = 2.4) {
+function pickNearestShape(point, maxDistance = 1.8) {
   let best = null;
   let bestDist = Infinity;
   for (const mesh of placedShapes) {
@@ -304,11 +328,12 @@ function clearShapes() {
 
 function saveScene() {
   const payload = placedShapes.map((mesh) => ({
-    type: inferShapeTypeFromGeometry(mesh.geometry),
-    size: Number(mesh.geometry.parameters?.width || mesh.geometry.parameters?.radiusTop || 1),
+    type: mesh.userData.shapeType || inferShapeTypeFromGeometry(mesh.geometry),
+    size: Number(mesh.userData.baseSize || 1),
     color: `#${mesh.material.color.getHexString()}`,
     position: mesh.position.toArray(),
     rotation: [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z],
+    scale: mesh.scale.toArray(),
   }));
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -324,14 +349,13 @@ function loadSceneFromPayload(payload) {
   clearShapes();
   payload.forEach((item) => {
     const geometry = buildGeometry(item.type || "cube", Number(item.size || 1));
-    const material = new THREE.MeshStandardMaterial({
-      color: item.color || "#39d0b8",
-      roughness: 0.46,
-      metalness: 0.2,
-    });
+    const material = new THREE.MeshStandardMaterial({ color: item.color || "#39d0b8", roughness: 0.46, metalness: 0.2 });
     const mesh = new THREE.Mesh(geometry, material);
     if (Array.isArray(item.position)) mesh.position.set(item.position[0], item.position[1], item.position[2]);
     if (Array.isArray(item.rotation)) mesh.rotation.set(item.rotation[0], item.rotation[1], item.rotation[2]);
+    if (Array.isArray(item.scale)) mesh.scale.set(item.scale[0], item.scale[1], item.scale[2]);
+    mesh.userData.baseSize = Number(item.size || 1);
+    mesh.userData.shapeType = item.type || "cube";
     placedShapes.push(mesh);
     scene.add(mesh);
   });
@@ -341,31 +365,40 @@ function loadSceneFromPayload(payload) {
 function processGestures(results) {
   if (!results?.landmarks?.length) {
     fistStartAt = null;
+    prevPinch = false;
+    isTransformPinching = false;
     return;
   }
 
   const hand = results.landmarks[0];
+  drawCursor(hand[8]);
+
+  const rawPoint = screenToWorldOnPlane(hand[8]);
+  if (!rawPoint) return;
+  const worldPoint = smoothWorldPoint(rawPoint);
+
   const pinching = isPinching(hand);
+  const pinchStart = pinching && !prevPinch;
+  const pinchEnd = !pinching && prevPinch;
   const mode = gestureModeEl?.value || "spawn";
 
   if (mode === "spawn") {
-    if (pinching) spawnShape(hand);
-    isTransformPinching = false;
+    if (pinchStart) spawnShapeAtWorld(worldPoint);
     setSelection(null);
   } else {
-    const worldPoint = handToWorldPoint(hand);
-    if (pinching && !isTransformPinching) {
+    if (pinchStart) {
       setSelection(pickNearestShape(worldPoint));
       isTransformPinching = true;
     }
-    if (pinching && selectedShape) {
-      selectedShape.position.lerp(worldPoint, 0.35);
-      setStatus("Transforming selected shape", "ok");
+    if (pinching && selectedShape && isTransformPinching) {
+      const targetY = selectedShape.position.y;
+      selectedShape.position.lerp(new THREE.Vector3(worldPoint.x, targetY, worldPoint.z), 0.35);
+      setStatus("Transform mode: moving selected shape", "ok");
     }
-    if (!pinching) {
-      isTransformPinching = false;
-    }
+    if (pinchEnd) isTransformPinching = false;
   }
+
+  prevPinch = pinching;
 
   if (isFist(hand)) {
     if (fistStartAt === null) fistStartAt = performance.now();
@@ -386,7 +419,6 @@ function detectLoop() {
     const results = handLandmarker.detectForVideo(webcamEl, performance.now());
     drawHands(results);
     processGestures(results);
-
     const count = results?.landmarks?.length ?? 0;
     if (!count) setStatus("No hands detected", "idle");
   }
@@ -407,11 +439,7 @@ async function startTracking() {
   setStatus("Requesting camera access...", "ok");
 
   try {
-    const preferred = {
-      audio: false,
-      video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
-    };
-
+    const preferred = { audio: false, video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } };
     try {
       webcamStream = await navigator.mediaDevices.getUserMedia(preferred);
     } catch {
@@ -424,11 +452,7 @@ async function startTracking() {
     webcamEl.playsInline = true;
 
     await waitForVideoReady(webcamEl);
-    try {
-      await webcamEl.play();
-    } catch {
-      // Some browsers autoplay camera streams only after a user gesture.
-    }
+    try { await webcamEl.play(); } catch {}
 
     setStatus("Camera active. Loading hand model...", "ok");
     await ensureLandmarkerReady();
@@ -437,7 +461,7 @@ async function startTracking() {
     stopBtn.disabled = false;
     isRunning = true;
     lastVideoTime = -1;
-    setStatus("Camera active. Pinch to spawn.", "ok");
+    setStatus("Camera active. Pinch to place.", "ok");
     detectLoop();
   } catch (err) {
     console.error(err);
@@ -463,12 +487,10 @@ function stopTracking() {
     cancelAnimationFrame(rafId);
     rafId = null;
   }
-
   if (webcamStream) {
     webcamStream.getTracks().forEach((t) => t.stop());
     webcamStream = null;
   }
-
   webcamEl.srcObject = null;
   ctx.clearRect(0, 0, overlayEl.width, overlayEl.height);
   startBtn.disabled = false;
