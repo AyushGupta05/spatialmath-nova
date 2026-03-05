@@ -200,7 +200,8 @@ export function bootstrapApp() {
           activeMesh.rotation.y = interaction.rotation;
 
           const calibratedScale = appState.calibration.scaleK || 1;
-          const scale = (0.45 + interaction.resize * 2.4) * calibratedScale;
+          const twoHand = interaction.twoHandBoost == null ? 1 : (0.85 + interaction.twoHandBoost * 0.7);
+          const scale = (0.45 + interaction.resize * 2.4) * calibratedScale * twoHand;
           activeMesh.scale.setScalar(scale);
           updateGeometryMetrics(activeMesh.userData.shape || shapeTypeEl.value, Number(sizeInputEl.value) * scale);
         }
