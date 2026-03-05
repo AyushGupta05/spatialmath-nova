@@ -42,6 +42,14 @@
           </label>
 
           <label class="field">
+            <span>Gesture Mode</span>
+            <select id="gestureMode">
+              <option value="spawn">Spawn</option>
+              <option value="transform">Transform</option>
+            </select>
+          </label>
+
+          <label class="field">
             <span>Base Size</span>
             <input id="sizeInput" type="range" min="0.2" max="2.5" step="0.05" value="0.9" />
           </label>
@@ -59,6 +67,7 @@
           <p id="status" class="status" data-state="idle">Idle</p>
           <ul class="hint-list">
             <li><strong>Pinch</strong> (thumb + index) to spawn shape at hand position.</li>
+            <li><strong>Transform mode:</strong> pinch near an object to grab/move it.</li>
             <li><strong>Fist hold</strong> (~0.8s) deletes the last shape.</li>
             <li>Use mouse drag on the 3D canvas to orbit.</li>
           </ul>

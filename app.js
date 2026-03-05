@@ -11,6 +11,7 @@ const stopBtn = document.querySelector("#stopBtn");
 const undoBtn = document.querySelector("#undoBtn");
 const clearBtn = document.querySelector("#clearBtn");
 const shapeTypeEl = document.querySelector("#shapeType");
+const gestureModeEl = document.querySelector("#gestureMode");
 const sizeInputEl = document.querySelector("#sizeInput");
 const colorInputEl = document.querySelector("#colorInput");
 const statusEl = document.querySelector("#status");
@@ -28,6 +29,8 @@ let rafId = null;
 let lastVideoTime = -1;
 let lastSpawnAt = 0;
 let fistStartAt = null;
+let selectedShape = null;
+let isTransformPinching = false;
 const spawnCooldownMs = 420;
 const placedShapes = [];
 
@@ -245,10 +248,31 @@ function spawnShape(hand) {
 function undoLastShape() {
   const mesh = placedShapes.pop();
   if (!mesh) return;
+  if (selectedShape === mesh) selectedShape = null;
   scene.remove(mesh);
   mesh.geometry.dispose();
   mesh.material.dispose();
   setStatus(`Removed last shape. Remaining: ${placedShapes.length}`, "ok");
+}
+
+function pickNearestShape(point, maxDistance = 2.4) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const mesh of placedShapes) {
+    const d = mesh.position.distanceTo(point);
+    if (d < bestDist && d <= maxDistance) {
+      best = mesh;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+function setSelection(mesh) {
+  if (selectedShape === mesh) return;
+  if (selectedShape?.material?.emissive) selectedShape.material.emissive.setHex(0x000000);
+  selectedShape = mesh;
+  if (selectedShape?.material?.emissive) selectedShape.material.emissive.setHex(0x113333);
 }
 
 function clearShapes() {
@@ -258,6 +282,7 @@ function clearShapes() {
     mesh.geometry.dispose();
     mesh.material.dispose();
   }
+  setSelection(null);
   setStatus("Cleared all shapes", "idle");
 }
 
@@ -268,7 +293,27 @@ function processGestures(results) {
   }
 
   const hand = results.landmarks[0];
-  if (isPinching(hand)) spawnShape(hand);
+  const pinching = isPinching(hand);
+  const mode = gestureModeEl?.value || "spawn";
+
+  if (mode === "spawn") {
+    if (pinching) spawnShape(hand);
+    isTransformPinching = false;
+    setSelection(null);
+  } else {
+    const worldPoint = handToWorldPoint(hand);
+    if (pinching && !isTransformPinching) {
+      setSelection(pickNearestShape(worldPoint));
+      isTransformPinching = true;
+    }
+    if (pinching && selectedShape) {
+      selectedShape.position.lerp(worldPoint, 0.35);
+      setStatus("Transforming selected shape", "ok");
+    }
+    if (!pinching) {
+      isTransformPinching = false;
+    }
+  }
 
   if (isFist(hand)) {
     if (fistStartAt === null) fistStartAt = performance.now();
