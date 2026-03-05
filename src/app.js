@@ -199,36 +199,68 @@ export function bootstrapApp() {
   }
 
   function drawPlacementReticle(x, y, radius) {
+    const t = performance.now() * 0.006;
     const isSquareReticle = shapeTypeEl.value === "cube";
-    ctx.strokeStyle = "#ffd166";
+    const ring = radius * (0.9 + 0.12 * Math.sin(t));
+
+    // soft outer ring
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(255,255,255,0.82)";
+    ctx.beginPath();
+    ctx.arc(x, y, ring, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // inner shape icon (playful for kids)
     if (isSquareReticle) {
-      const side = radius * 1.8;
+      const side = ring * 1.15;
       const half = side * 0.5;
-      ctx.strokeRect(x - half, y - half, side, side);
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(Math.sin(t) * 0.2);
+      ctx.strokeStyle = "rgba(255,183,213,0.95)";
+      ctx.strokeRect(-half, -half, side, side);
+      ctx.restore();
       return;
     }
+
+    // tiny star marker
+    const spikes = 5;
+    const outer = ring * 0.52;
+    const inner = outer * 0.5;
+    let rot = Math.PI / 2 * 3;
+    const step = Math.PI / spikes;
     ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.moveTo(x, y - outer);
+    for (let i = 0; i < spikes; i++) {
+      ctx.lineTo(x + Math.cos(rot) * outer, y + Math.sin(rot) * outer);
+      rot += step;
+      ctx.lineTo(x + Math.cos(rot) * inner, y + Math.sin(rot) * inner);
+      rot += step;
+    }
+    ctx.closePath();
+    ctx.fillStyle = "rgba(255,224,138,0.88)";
+    ctx.fill();
   }
 
   function drawDebug(hands, interaction, primaryHand = null) {
     ctx.clearRect(0, 0, overlayEl.width, overlayEl.height);
     if (!hands?.length) return;
 
-    const colors = ["#66ffe3", "#7fb7ff"];
-
-    ctx.globalCompositeOperation = "screen";
+    const colors = ["#ff9ecf", "#8fc6ff"];
+    const t = performance.now() * 0.004;
+    ctx.globalCompositeOperation = "source-over";
 
     hands.forEach((hand, i) => {
       const color = colors[i % colors.length];
       const isPrimary = hand === primaryHand;
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
-      ctx.lineWidth = isPrimary ? 2.2 : 1.6;
-      ctx.globalAlpha = isPrimary ? 0.95 : 0.6;
-      ctx.shadowBlur = isPrimary ? 16 : 8;
+      ctx.lineWidth = isPrimary ? 2 : 1.4;
+      ctx.globalAlpha = isPrimary ? 0.85 : 0.5;
+      ctx.shadowBlur = isPrimary ? 8 : 4;
       ctx.shadowColor = color;
+      ctx.setLineDash(isPrimary ? [4, 5] : [2, 6]);
+      ctx.lineDashOffset = -t * (isPrimary ? 22 : 12);
 
       for (const [a, b] of HAND_CONNECTIONS) {
         const p1 = hand[a];
@@ -242,19 +274,28 @@ export function bootstrapApp() {
       hand.forEach((pt, idx) => {
         const x = (1 - pt.x) * overlayEl.width;
         const y = pt.y * overlayEl.height;
+
+        // bubble dot
         ctx.beginPath();
-        ctx.arc(x, y, idx === 0 ? 6.0 : (isPrimary ? 3.4 : 2.6), 0, Math.PI * 2);
+        ctx.arc(x, y, idx === 0 ? 5.2 : (isPrimary ? 3.1 : 2.3), 0, Math.PI * 2);
         ctx.fill();
+
+        // white glossy highlight
+        ctx.beginPath();
+        ctx.fillStyle = "rgba(255,255,255,0.7)";
+        ctx.arc(x - 1.2, y - 1.2, idx === 0 ? 1.4 : 0.8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = color;
       });
 
-      // subtle palm aura (cool visual, low opacity so it doesn't block scene)
+      // soft palm aura (playful, but non-blocking)
       const palm = palmCenterLandmark(hand);
       if (palm) {
         const px = (1 - palm.x) * overlayEl.width;
         const py = palm.y * overlayEl.height;
-        const aura = 18 + (interaction?.pinchStrength || 0) * 14;
+        const aura = 16 + (interaction?.pinchStrength || 0) * 12;
         const g = ctx.createRadialGradient(px, py, 2, px, py, aura);
-        g.addColorStop(0, isPrimary ? "rgba(130,255,230,0.28)" : "rgba(127,183,255,0.2)");
+        g.addColorStop(0, isPrimary ? "rgba(255,190,224,0.2)" : "rgba(163,206,255,0.18)");
         g.addColorStop(1, "rgba(0,0,0,0)");
         ctx.fillStyle = g;
         ctx.beginPath();
@@ -269,10 +310,12 @@ export function bootstrapApp() {
         const contactY = contact.y * overlayEl.height;
         const pulse = pinchPulseRadius(interaction?.pinchStrength || 0);
         ctx.globalAlpha = 0.95;
+        ctx.setLineDash([]);
         drawPlacementReticle(contactX, contactY, pulse);
       }
     });
 
+    ctx.setLineDash([]);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = "source-over";
     ctx.shadowBlur = 0;
