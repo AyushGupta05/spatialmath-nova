@@ -1,6 +1,6 @@
 import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
-import * as THREE from "https://unpkg.com/three@0.164.1/build/three.module.js";
-import { OrbitControls } from "https://unpkg.com/three@0.164.1/examples/jsm/controls/OrbitControls.js";
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 const MODEL_PATH = new URL("./models/hand_landmarker.task", window.location.href).toString();
 const webcamEl = document.querySelector("#webcam");
@@ -86,6 +86,35 @@ animateWorld();
 function setStatus(message, state = "ok") {
   statusEl.textContent = message;
   statusEl.dataset.state = state;
+}
+
+function waitForVideoReady(video, timeoutMs = 6000) {
+  if (video.readyState >= 1) return Promise.resolve();
+
+  return new Promise((resolve, reject) => {
+    const onReady = () => {
+      clearTimeout(timeoutId);
+      video.removeEventListener("loadedmetadata", onReady);
+      video.removeEventListener("error", onError);
+      resolve();
+    };
+
+    const onError = () => {
+      clearTimeout(timeoutId);
+      video.removeEventListener("loadedmetadata", onReady);
+      video.removeEventListener("error", onError);
+      reject(new Error("Video stream failed to initialize"));
+    };
+
+    const timeoutId = setTimeout(() => {
+      video.removeEventListener("loadedmetadata", onReady);
+      video.removeEventListener("error", onError);
+      reject(new Error("Camera metadata timeout"));
+    }, timeoutMs);
+
+    video.addEventListener("loadedmetadata", onReady);
+    video.addEventListener("error", onError, { once: true });
+  });
 }
 
 async function createHandLandmarker() {
@@ -275,15 +304,12 @@ async function startTracking() {
     return;
   }
 
-  const isLocalhost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-  if (!window.isSecureContext && !isLocalhost) {
-    setStatus("Camera requires HTTPS (or localhost).", "error");
-    return;
-  }
+  const isLocalhost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+  startBtn.disabled = true;
+  stopBtn.disabled = true;
+  setStatus("Requesting camera access...", "ok");
 
   try {
-    await ensureLandmarkerReady();
-
     const preferred = {
       audio: false,
       video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -300,15 +326,15 @@ async function startTracking() {
     webcamEl.muted = true;
     webcamEl.playsInline = true;
 
-    await new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error("Camera metadata timeout")), 4000);
-      webcamEl.onloadedmetadata = () => {
-        clearTimeout(t);
-        resolve();
-      };
-    });
+    await waitForVideoReady(webcamEl);
+    try {
+      await webcamEl.play();
+    } catch {
+      // Some browsers autoplay camera streams only after a user gesture.
+    }
 
-    await webcamEl.play();
+    setStatus("Camera active. Loading hand model...", "ok");
+    await ensureLandmarkerReady();
 
     startBtn.disabled = true;
     stopBtn.disabled = false;
@@ -319,7 +345,18 @@ async function startTracking() {
   } catch (err) {
     console.error(err);
     const reason = err?.name || err?.message || "unknown error";
-    setStatus(`Unable to start camera/model: ${reason}`, "error");
+
+    if (webcamStream) {
+      webcamStream.getTracks().forEach((t) => t.stop());
+      webcamStream = null;
+    }
+    webcamEl.srcObject = null;
+
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+
+    const hint = !window.isSecureContext && !isLocalhost ? " Try HTTPS or localhost." : "";
+    setStatus(`Unable to start camera/model: ${reason}.${hint}`, "error");
   }
 }
 

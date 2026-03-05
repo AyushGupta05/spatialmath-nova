@@ -3,30 +3,74 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MediaPipe Hands Tracker</title>
+    <title>SpatialMath Nova — Hand Sculpt</title>
     <link rel="stylesheet" href="./styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.164.1/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.164.1/examples/jsm/"
+        }
+      }
+    </script>
   </head>
   <body>
     <main class="app-shell">
       <header class="hero">
-        <p class="eyebrow">WebRTC + WebAssembly</p>
-        <h1>MediaPipe Hands Tracker</h1>
-        <p class="subhead">
-          Real-time 21-point hand landmarks in the browser using your webcam.
-        </p>
+        <p class="eyebrow">SpatialMath Nova</p>
+        <h1>Hand Sculpt Studio</h1>
+        <p class="subhead">Pinch to place 3D shapes in a live Three.js world powered by MediaPipe Hands.</p>
       </header>
 
-      <section class="panel">
-        <div class="controls">
-          <button id="startBtn" class="btn btn-primary">Start Camera</button>
-          <button id="stopBtn" class="btn" disabled>Stop</button>
-          <p id="status" class="status" data-state="idle">Idle</p>
-        </div>
+      <section class="layout">
+        <aside class="panel controls-panel">
+          <h2>Build Controls</h2>
 
-        <div class="stage">
-          <video id="webcam" autoplay playsinline muted></video>
-          <canvas id="overlay"></canvas>
-        </div>
+          <div class="controls-row">
+            <button id="startBtn" class="btn btn-primary">Start Camera</button>
+            <button id="stopBtn" class="btn" disabled>Stop</button>
+          </div>
+
+          <label class="field">
+            <span>Shape</span>
+            <select id="shapeType">
+              <option value="cube">Cube</option>
+              <option value="cuboid">Cuboid</option>
+              <option value="sphere">Sphere</option>
+              <option value="cylinder">Cylinder</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Base Size</span>
+            <input id="sizeInput" type="range" min="0.2" max="2.5" step="0.05" value="0.9" />
+          </label>
+
+          <label class="field">
+            <span>Color</span>
+            <input id="colorInput" type="color" value="#39d0b8" />
+          </label>
+
+          <div class="controls-row">
+            <button id="undoBtn" class="btn">Undo Last</button>
+            <button id="clearBtn" class="btn btn-danger">Clear All</button>
+          </div>
+
+          <p id="status" class="status" data-state="idle">Idle</p>
+          <ul class="hint-list">
+            <li><strong>Pinch</strong> (thumb + index) to spawn shape at hand position.</li>
+            <li><strong>Fist hold</strong> (~0.8s) deletes the last shape.</li>
+            <li>Use mouse drag on the 3D canvas to orbit.</li>
+          </ul>
+        </aside>
+
+        <section class="panel studio-panel">
+          <div class="stage-wrap">
+            <div class="stage" id="worldMount"></div>
+            <canvas id="overlay"></canvas>
+            <video id="webcam" autoplay playsinline muted></video>
+          </div>
+        </section>
       </section>
     </main>
 
