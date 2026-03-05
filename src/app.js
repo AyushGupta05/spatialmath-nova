@@ -11,6 +11,8 @@ const HAND_CONNECTIONS = [
   [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
   [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]
 ];
+
+const SHOW_HAND_ATTACHED_VISUALS = false;
 const PALM_CENTER_INDEXES = [0, 5, 9, 13, 17];
 const SPAWN_COOLDOWN_MS = 220;
 const PLACEMENT_PULSE_BASE = 8;
@@ -91,6 +93,7 @@ export function bootstrapApp() {
   world.scene.add(selectionRing);
   world.scene.add(rotationGuide);
   world.scene.add(palmProxy);
+  palmProxy.visible = false;
 
   function setActiveMesh(mesh) {
     if (activeMesh === mesh) return;
@@ -258,7 +261,7 @@ export function bootstrapApp() {
         ctx.fill();
       }
 
-      if (isPrimary) {
+      if (isPrimary && SHOW_HAND_ATTACHED_VISUALS) {
         const contact = midpointLandmark(hand[4], hand[8]) || hand[8];
         const contactX = (1 - contact.x) * overlayEl.width;
         const contactY = contact.y * overlayEl.height;
@@ -442,7 +445,7 @@ export function bootstrapApp() {
         const palmHit = smoothedPalm;
         const pinchHit = smoothedPinch;
 
-        if (palmHit) {
+        if (palmHit && SHOW_HAND_ATTACHED_VISUALS) {
           palmProxy.visible = true;
           palmProxy.position.set(palmHit.x, 0.02, palmHit.z);
         } else {
