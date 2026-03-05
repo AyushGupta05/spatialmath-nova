@@ -11,6 +11,11 @@ const HAND_CONNECTIONS = [
   [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
   [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]
 ];
+const PALM_CENTER_INDEXES = [0, 5, 9, 13, 17];
+const SPAWN_COOLDOWN_MS = 220;
+const PLACEMENT_PULSE_BASE = 8;
+const PLACEMENT_PULSE_GAIN = 7;
+const PLACEMENT_PULSE_TRIGGER_RADIUS = 12.2;
 
 function pinchDistance(hand) {
   const a = hand?.[4];
@@ -64,10 +69,10 @@ export function bootstrapApp() {
   let lastInferAt = 0;
   let running = false;
   let prevPinch = false;
-  let pinchConsumed = false;
-  let pinchStableFrames = 0;
+  let prevPlacementPulseActive = false;
   let smoothedPalm = null;
-  let smoothedFinger = null;
+  let smoothedPinch = null;
+  let lastSpawnAt = 0;
   let prevTwoHandAngle = null;
   let transformLocked = false;
   let activeMesh = null;
@@ -116,6 +121,35 @@ export function bootstrapApp() {
     return prev;
   }
 
+  function midpointLandmark(a, b) {
+    if (!a || !b) return null;
+    return {
+      x: (a.x + b.x) * 0.5,
+      y: (a.y + b.y) * 0.5,
+      z: (a.z + b.z) * 0.5,
+    };
+  }
+
+  function palmCenterLandmark(hand) {
+    if (!hand) return null;
+    const sum = { x: 0, y: 0, z: 0 };
+    let count = 0;
+    for (const idx of PALM_CENTER_INDEXES) {
+      const p = hand[idx];
+      if (!p) continue;
+      sum.x += p.x;
+      sum.y += p.y;
+      sum.z += p.z;
+      count += 1;
+    }
+    if (!count) return null;
+    return {
+      x: sum.x / count,
+      y: sum.y / count,
+      z: sum.z / count,
+    };
+  }
+
   function applyDeadzone(current, target, dz = 0.045) {
     if (!current) return target;
     if (current.distanceTo(target) < dz) return current;
@@ -160,18 +194,40 @@ export function bootstrapApp() {
     intentBadgeEl.dataset.state = state;
   }
 
-  function drawDebug(hands, interaction) {
+  function pinchPulseRadius(pinchStrength = 0) {
+    return PLACEMENT_PULSE_BASE + (Math.max(0, pinchStrength) * PLACEMENT_PULSE_GAIN);
+  }
+
+  function drawPlacementReticle(x, y, radius) {
+    const isSquareReticle = shapeTypeEl.value === "cube";
+    ctx.strokeStyle = "#ffd166";
+    if (isSquareReticle) {
+      const side = radius * 1.8;
+      const half = side * 0.5;
+      ctx.strokeRect(x - half, y - half, side, side);
+      return;
+    }
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  function drawDebug(hands, interaction, primaryHand = null) {
     ctx.clearRect(0, 0, overlayEl.width, overlayEl.height);
     if (!hands?.length) return;
 
-    const colors = ["#7df9d8", "#7cc9ff"];
+    const colors = ["#66ffe3", "#7fb7ff"];
+
+    ctx.globalCompositeOperation = "screen";
 
     hands.forEach((hand, i) => {
       const color = colors[i % colors.length];
+      const isPrimary = hand === primaryHand;
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
-      ctx.lineWidth = 2;
-      ctx.shadowBlur = 12;
+      ctx.lineWidth = isPrimary ? 2.2 : 1.6;
+      ctx.globalAlpha = isPrimary ? 0.95 : 0.6;
+      ctx.shadowBlur = isPrimary ? 16 : 8;
       ctx.shadowColor = color;
 
       for (const [a, b] of HAND_CONNECTIONS) {
@@ -187,20 +243,38 @@ export function bootstrapApp() {
         const x = (1 - pt.x) * overlayEl.width;
         const y = pt.y * overlayEl.height;
         ctx.beginPath();
-        ctx.arc(x, y, idx === 0 ? 6.5 : 3.0, 0, Math.PI * 2);
+        ctx.arc(x, y, idx === 0 ? 6.0 : (isPrimary ? 3.4 : 2.6), 0, Math.PI * 2);
         ctx.fill();
       });
 
-      const tip = hand[8];
-      const tipX = (1 - tip.x) * overlayEl.width;
-      const tipY = tip.y * overlayEl.height;
-      const pulse = 8 + ((interaction?.pinchStrength || 0) * 7);
-      ctx.strokeStyle = "#ffd166";
-      ctx.beginPath();
-      ctx.arc(tipX, tipY, pulse, 0, Math.PI * 2);
-      ctx.stroke();
+      // subtle palm aura (cool visual, low opacity so it doesn't block scene)
+      const palm = palmCenterLandmark(hand);
+      if (palm) {
+        const px = (1 - palm.x) * overlayEl.width;
+        const py = palm.y * overlayEl.height;
+        const aura = 18 + (interaction?.pinchStrength || 0) * 14;
+        const g = ctx.createRadialGradient(px, py, 2, px, py, aura);
+        g.addColorStop(0, isPrimary ? "rgba(130,255,230,0.28)" : "rgba(127,183,255,0.2)");
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(px, py, aura, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = color;
+      }
+
+      if (isPrimary) {
+        const contact = midpointLandmark(hand[4], hand[8]) || hand[8];
+        const contactX = (1 - contact.x) * overlayEl.width;
+        const contactY = contact.y * overlayEl.height;
+        const pulse = pinchPulseRadius(interaction?.pinchStrength || 0);
+        ctx.globalAlpha = 0.95;
+        drawPlacementReticle(contactX, contactY, pulse);
+      }
     });
 
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
     ctx.shadowBlur = 0;
   }
 
@@ -345,7 +419,7 @@ export function bootstrapApp() {
       }
 
       const interaction = pipeline.update(primary, secondary);
-      drawDebug(hands, interaction);
+      drawDebug(hands, interaction, primary);
       appState.interaction = interaction;
 
       if (!interaction.handsDetected) {
@@ -362,12 +436,14 @@ export function bootstrapApp() {
       pipeline.setAlpha(dynamicAlpha);
 
       if (primary) {
-        const palmHitRaw = world.projectToGround(primary[0]);
-        const fingerHitRaw = world.projectToGround(primary[8]);
+        const palmCenter = palmCenterLandmark(primary);
+        const pinchContact = midpointLandmark(primary[4], primary[8]);
+        const palmHitRaw = palmCenter ? world.projectToGround(palmCenter) : null;
+        const pinchHitRaw = pinchContact ? world.projectToGround(pinchContact) : null;
         smoothedPalm = smoothPoint(smoothedPalm, palmHitRaw, 0.24);
-        smoothedFinger = smoothPoint(smoothedFinger, fingerHitRaw, 0.3);
+        smoothedPinch = smoothPoint(smoothedPinch, pinchHitRaw, 0.3);
         const palmHit = smoothedPalm;
-        const fingerHit = smoothedFinger;
+        const pinchHit = smoothedPinch;
 
         if (palmHit) {
           palmProxy.visible = true;
@@ -376,16 +452,17 @@ export function bootstrapApp() {
           palmProxy.visible = false;
         }
 
-        if (interaction.pinch) pinchStableFrames += 1;
-        else pinchStableFrames = 0;
-
         const pinchStart = interaction.pinch && !prevPinch;
-        const pinchConfirmed = interaction.pinch && pinchStableFrames >= 1;
+        const pulseRadius = pinchPulseRadius(interaction.pinchStrength || 0);
+        const placementPulseActive = interaction.pinch && pulseRadius >= PLACEMENT_PULSE_TRIGGER_RADIUS;
+        const placementPulseTrigger = placementPulseActive && !prevPlacementPulseActive;
+        const pinchHitForSpawn = pinchHitRaw || pinchHit;
+        const canSpawn = now - lastSpawnAt >= SPAWN_COOLDOWN_MS;
 
-        if ((pinchStart || (pinchConfirmed && !pinchConsumed)) && fingerHit && gestureModeEl.value === "spawn") {
+        if (placementPulseTrigger && pinchHitForSpawn && canSpawn && gestureModeEl.value === "spawn") {
           const mesh = world.buildMesh(shapeTypeEl.value, Number(sizeInputEl.value), colorInputEl.value);
-          mesh.position.x = shouldSnapPosition() ? snapValue(fingerHit.x) : fingerHit.x;
-          mesh.position.z = shouldSnapPosition() ? snapValue(fingerHit.z) : fingerHit.z;
+          mesh.position.x = shouldSnapPosition() ? snapValue(pinchHitForSpawn.x) : pinchHitForSpawn.x;
+          mesh.position.z = shouldSnapPosition() ? snapValue(pinchHitForSpawn.z) : pinchHitForSpawn.z;
           mesh.rotation.y = snapRotation(Math.random() * Math.PI);
           mesh.userData.shape = shapeTypeEl.value;
           mesh.userData.baseSize = Number(sizeInputEl.value);
@@ -394,15 +471,14 @@ export function bootstrapApp() {
           placedMeshes.push(mesh);
           enforceMeshBudget();
           setStatus(`Placed ${shapeTypeEl.value}`, "ok");
-          pinchConsumed = true;
+          lastSpawnAt = now;
         }
 
-        if (pinchStart && fingerHit && gestureModeEl.value === "transform") {
-          setActiveMesh(pickNearestMesh(fingerHit));
+        if (pinchStart && palmHit && gestureModeEl.value === "transform") {
+          setActiveMesh(pickNearestMesh(palmHit));
           transformLocked = Boolean(activeMesh);
           prevTwoHandAngle = null;
           if (transformLocked) setStatus("Transform lock acquired", "ok");
-          pinchConsumed = true;
         }
 
         if (interaction.pinch && activeMesh && palmHit && gestureModeEl.value === "transform") {
@@ -450,16 +526,17 @@ export function bootstrapApp() {
           }
         }
 
-        if (!interaction.pinch) pinchConsumed = false;
-
+        prevPlacementPulseActive = placementPulseActive;
         prevPinch = interaction.pinch;
       }
 
       refreshDebug();
       if (!primary) {
+        prevPinch = false;
+        prevPlacementPulseActive = false;
         palmProxy.visible = false;
         smoothedPalm = null;
-        smoothedFinger = null;
+        smoothedPinch = null;
       }
     }
 
