@@ -86,6 +86,27 @@ export function createWorld(container) {
     return arrow;
   }
 
+  function createPalmProxy() {
+    const group = new THREE.Group();
+
+    const disc = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.18, 0.18, 0.03, 24),
+      new THREE.MeshStandardMaterial({ color: 0x7cc9ff, transparent: true, opacity: 0.8 })
+    );
+    disc.position.y = 0.03;
+
+    const pointer = new THREE.Mesh(
+      new THREE.ConeGeometry(0.09, 0.3, 18),
+      new THREE.MeshStandardMaterial({ color: 0xffd166, transparent: true, opacity: 0.9 })
+    );
+    pointer.rotation.x = Math.PI;
+    pointer.position.set(0, 0.18, 0.2);
+
+    group.add(disc, pointer);
+    group.visible = false;
+    return group;
+  }
+
   function animate() {
     controls.update();
     renderer.render(scene, camera);
@@ -96,5 +117,5 @@ export function createWorld(container) {
   resize();
   animate();
 
-  return { scene, camera, renderer, projectToGround, buildMesh, createSelectionRing, createRotationGuide };
+  return { scene, camera, renderer, projectToGround, buildMesh, createSelectionRing, createRotationGuide, createPalmProxy };
 }

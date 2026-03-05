@@ -7,6 +7,10 @@ import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@m
 import * as THREE from "three";
 
 const MODEL_PATH = new URL("../models/hand_landmarker.task", window.location.href).toString();
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]
+];
 
 export function bootstrapApp() {
   const webcamEl = document.querySelector("#webcam");
@@ -64,8 +68,10 @@ export function bootstrapApp() {
 
   const selectionRing = world.createSelectionRing();
   const rotationGuide = world.createRotationGuide();
+  const palmProxy = world.createPalmProxy();
   world.scene.add(selectionRing);
   world.scene.add(rotationGuide);
+  world.scene.add(palmProxy);
 
   function setActiveMesh(mesh) {
     if (activeMesh === mesh) return;
@@ -130,13 +136,32 @@ export function bootstrapApp() {
   function drawDebug(hand) {
     ctx.clearRect(0, 0, overlayEl.width, overlayEl.height);
     if (!hand) return;
-    const p = hand[8];
-    const x = (1 - p.x) * overlayEl.width;
-    const y = p.y * overlayEl.height;
-    ctx.strokeStyle = "#f9ff9a";
+
+    ctx.strokeStyle = "#7df9d8";
+    ctx.fillStyle = "#7df9d8";
     ctx.lineWidth = 2;
+
+    for (const [a, b] of HAND_CONNECTIONS) {
+      const p1 = hand[a];
+      const p2 = hand[b];
+      ctx.beginPath();
+      ctx.moveTo((1 - p1.x) * overlayEl.width, p1.y * overlayEl.height);
+      ctx.lineTo((1 - p2.x) * overlayEl.width, p2.y * overlayEl.height);
+      ctx.stroke();
+    }
+
+    hand.forEach((pt, idx) => {
+      const x = (1 - pt.x) * overlayEl.width;
+      const y = pt.y * overlayEl.height;
+      ctx.beginPath();
+      ctx.arc(x, y, idx === 0 ? 6.5 : 3.2, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    const tip = hand[8];
+    ctx.strokeStyle = "#ffd166";
     ctx.beginPath();
-    ctx.arc(x, y, 8, 0, Math.PI * 2);
+    ctx.arc((1 - tip.x) * overlayEl.width, tip.y * overlayEl.height, 9, 0, Math.PI * 2);
     ctx.stroke();
   }
 
@@ -286,13 +311,22 @@ export function bootstrapApp() {
       pipeline.setAlpha(dynamicAlpha);
 
       if (handA) {
-        const hit = world.projectToGround(handA[8]);
+        const palmHit = world.projectToGround(handA[0]);
+        const fingerHit = world.projectToGround(handA[8]);
+
+        if (palmHit) {
+          palmProxy.visible = true;
+          palmProxy.position.set(palmHit.x, 0.02, palmHit.z);
+        } else {
+          palmProxy.visible = false;
+        }
+
         const pinchStart = interaction.pinch && !prevPinch;
 
-        if (pinchStart && hit && gestureModeEl.value === "spawn") {
+        if (pinchStart && fingerHit && gestureModeEl.value === "spawn") {
           const mesh = world.buildMesh(shapeTypeEl.value, Number(sizeInputEl.value), colorInputEl.value);
-          mesh.position.x = shouldSnapPosition() ? snapValue(hit.x) : hit.x;
-          mesh.position.z = shouldSnapPosition() ? snapValue(hit.z) : hit.z;
+          mesh.position.x = shouldSnapPosition() ? snapValue(fingerHit.x) : fingerHit.x;
+          mesh.position.z = shouldSnapPosition() ? snapValue(fingerHit.z) : fingerHit.z;
           mesh.rotation.y = snapRotation(Math.random() * Math.PI);
           mesh.userData.shape = shapeTypeEl.value;
           mesh.userData.baseSize = Number(sizeInputEl.value);
@@ -303,16 +337,16 @@ export function bootstrapApp() {
           setStatus(`Placed ${shapeTypeEl.value}`, "ok");
         }
 
-        if (pinchStart && hit && gestureModeEl.value === "transform") {
-          setActiveMesh(pickNearestMesh(hit));
+        if (pinchStart && fingerHit && gestureModeEl.value === "transform") {
+          setActiveMesh(pickNearestMesh(fingerHit));
           transformLocked = Boolean(activeMesh);
           prevTwoHandAngle = null;
           if (transformLocked) setStatus("Transform lock acquired", "ok");
         }
 
-        if (interaction.pinch && activeMesh && hit && gestureModeEl.value === "transform") {
-          activeMesh.position.x = shouldSnapPosition() ? snapValue(hit.x) : hit.x;
-          activeMesh.position.z = shouldSnapPosition() ? snapValue(hit.z) : hit.z;
+        if (interaction.pinch && activeMesh && palmHit && gestureModeEl.value === "transform") {
+          activeMesh.position.x = shouldSnapPosition() ? snapValue(palmHit.x) : palmHit.x;
+          activeMesh.position.z = shouldSnapPosition() ? snapValue(palmHit.z) : palmHit.z;
           activeMesh.rotation.y = snapRotation(interaction.rotation);
           rotationGuide.setDirection(new THREE.Vector3(Math.cos(activeMesh.rotation.y), 0, Math.sin(activeMesh.rotation.y)).normalize());
           rotationGuide.position.set(activeMesh.position.x, 0.05, activeMesh.position.z);
@@ -353,6 +387,7 @@ export function bootstrapApp() {
       }
 
       refreshDebug();
+      if (!handA) palmProxy.visible = false;
     }
 
     rafId = requestAnimationFrame(detectLoop);
