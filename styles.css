@@ -1,7 +1,7 @@
 :root {
-  --bg-top: #0d1f24;
-  --bg-bottom: #101826;
-  --card: rgba(7, 14, 24, 0.72);
+  --bg-top: #0b1120;
+  --bg-bottom: #070b14;
+  --card: rgba(10, 16, 28, 0.82);
   --line: rgba(130, 186, 204, 0.18);
   --text: #eaf4f8;
   --muted: #9bb2bf;
@@ -9,9 +9,7 @@
   --danger: #f07878;
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
@@ -19,127 +17,104 @@ body {
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
   color: var(--text);
   background:
-    radial-gradient(90rem 60rem at 10% -10%, #2b8a86 0%, transparent 58%),
-    radial-gradient(80rem 40rem at 100% 0%, #223763 0%, transparent 50%),
-    linear-gradient(155deg, var(--bg-top), var(--bg-bottom));
+    radial-gradient(80rem 40rem at 0% 0%, #204067 0%, transparent 50%),
+    radial-gradient(70rem 45rem at 100% 0%, #1a674f 0%, transparent 45%),
+    linear-gradient(160deg, var(--bg-top), var(--bg-bottom));
 }
 
 .app-shell {
-  width: min(1000px, 95vw);
+  width: min(1200px, 96vw);
   margin: 0 auto;
-  padding: 2.25rem 0 3rem;
+  padding: 1.5rem 0 2rem;
 }
 
-.hero {
-  margin-bottom: 1.25rem;
-}
+.hero { margin-bottom: 1rem; }
+.eyebrow { margin: 0; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; font-size: .75rem; }
+h1 { margin: .35rem 0; font-size: clamp(1.5rem, 3.7vw, 2.3rem); }
+.subhead { margin: 0; color: var(--muted); }
 
-.eyebrow {
-  margin: 0;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--muted);
-  font-size: 0.76rem;
-}
-
-h1 {
-  margin: 0.45rem 0 0.35rem;
-  font-size: clamp(1.8rem, 4vw, 2.6rem);
-}
-
-.subhead {
-  margin: 0;
-  color: var(--muted);
+.layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 10px;
 }
 
 .panel {
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--card);
+  padding: 10px;
   backdrop-filter: blur(8px);
-  padding: 1rem;
 }
 
-.controls {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  flex-wrap: wrap;
-  margin-bottom: 0.9rem;
+.controls-panel h2 { margin: .2rem 0 .8rem; font-size: 1rem; }
+.controls-row { display: flex; gap: 8px; margin-bottom: 8px; }
+
+.btn, select, input[type="color"], input[type="range"] {
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  color: var(--text);
+  background: rgba(255,255,255,.06);
 }
 
 .btn {
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0.6rem 1rem;
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.05);
+  padding: .55rem .85rem;
   cursor: pointer;
-  transition: transform 120ms ease, background 120ms ease;
 }
 
-.btn:hover:enabled {
-  transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.1);
-}
+.btn-primary { border-color: rgba(57,208,184,.6); background: rgba(57,208,184,.2); }
+.btn-danger { border-color: rgba(240,120,120,.55); background: rgba(240,120,120,.2); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
 
-.btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.btn-primary {
-  border-color: rgba(57, 208, 184, 0.45);
-  background: rgba(57, 208, 184, 0.13);
-}
+.field { display: grid; gap: 6px; margin-bottom: 8px; }
+.field span { font-size: .86rem; color: #cce0ea; }
+select, input[type="color"] { width: 100%; height: 38px; padding: 0 .5rem; }
+input[type="range"] { width: 100%; }
 
 .status {
-  margin: 0;
-  padding: 0.24rem 0.55rem;
+  margin: .4rem 0 .6rem;
+  padding: .3rem .55rem;
   border-radius: 999px;
   border: 1px solid var(--line);
   color: var(--muted);
-  font-size: 0.9rem;
+  font-size: .9rem;
 }
+.status[data-state="ok"] { color: #97ffe3; border-color: rgba(57,208,184,.5); }
+.status[data-state="error"] { color: #ffb0b0; border-color: rgba(240,120,120,.55); }
 
-.status[data-state="ok"] {
-  color: #8cf7e4;
-  border-color: rgba(90, 230, 210, 0.45);
-}
+.hint-list { margin: .3rem 0 0; padding-left: 1rem; color: var(--muted); font-size: .86rem; }
+.hint-list li { margin: .35rem 0; }
 
-.status[data-state="error"] {
-  color: #ffb0b0;
-  border-color: rgba(240, 120, 120, 0.5);
-}
-
-.stage {
+.stage-wrap {
   position: relative;
-  border-radius: 12px;
-  overflow: hidden;
   border: 1px solid var(--line);
-  background: #05090e;
+  border-radius: 10px;
+  overflow: hidden;
   aspect-ratio: 16 / 9;
+  background: #05090e;
 }
 
-#webcam,
-#overlay {
+.stage, #overlay {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  transform: scaleX(-1);
 }
 
+#overlay { pointer-events: none; z-index: 3; }
+#worldMount canvas { position: absolute; inset: 0; z-index: 1; }
 #webcam {
-  object-fit: cover;
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 160px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  opacity: .7;
+  transform: scaleX(-1);
+  z-index: 4;
 }
 
-#overlay {
-  pointer-events: none;
-}
-
-@media (max-width: 640px) {
-  .app-shell {
-    padding-top: 1.5rem;
-  }
+@media (max-width: 960px) {
+  .layout { grid-template-columns: 1fr; }
 }

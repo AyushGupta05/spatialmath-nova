@@ -1,29 +1,87 @@
 import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
+import * as THREE from "https://unpkg.com/three@0.164.1/build/three.module.js";
+import { OrbitControls } from "https://unpkg.com/three@0.164.1/examples/jsm/controls/OrbitControls.js";
 
 const MODEL_PATH = new URL("./models/hand_landmarker.task", window.location.href).toString();
-const HAND_CONNECTIONS = [
-  [0, 1], [1, 2], [2, 3], [3, 4],
-  [0, 5], [5, 6], [6, 7], [7, 8],
-  [5, 9], [9, 10], [10, 11], [11, 12],
-  [9, 13], [13, 14], [14, 15], [15, 16],
-  [13, 17], [17, 18], [18, 19], [19, 20],
-  [0, 17],
-];
-
 const webcamEl = document.querySelector("#webcam");
 const overlayEl = document.querySelector("#overlay");
+const worldMount = document.querySelector("#worldMount");
 const startBtn = document.querySelector("#startBtn");
 const stopBtn = document.querySelector("#stopBtn");
+const undoBtn = document.querySelector("#undoBtn");
+const clearBtn = document.querySelector("#clearBtn");
+const shapeTypeEl = document.querySelector("#shapeType");
+const sizeInputEl = document.querySelector("#sizeInput");
+const colorInputEl = document.querySelector("#colorInput");
 const statusEl = document.querySelector("#status");
 const ctx = overlayEl.getContext("2d");
 
-const palette = ["#00f5d4", "#ffb703"];
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]
+];
 
 let handLandmarker = null;
 let webcamStream = null;
 let isRunning = false;
 let rafId = null;
 let lastVideoTime = -1;
+let lastSpawnAt = 0;
+let fistStartAt = null;
+const spawnCooldownMs = 420;
+const placedShapes = [];
+
+// --- Three.js world ---
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050a12);
+
+const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 100);
+camera.position.set(0, 4.5, 8.5);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+worldMount.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0, 1.2, 0);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+const dir = new THREE.DirectionalLight(0xffffff, 0.95);
+dir.position.set(5, 7, 3);
+scene.add(dir);
+
+const grid = new THREE.GridHelper(18, 18, 0x335566, 0x223344);
+scene.add(grid);
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(18, 18),
+  new THREE.MeshStandardMaterial({ color: 0x0b1320, metalness: 0.05, roughness: 0.9 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -0.01;
+scene.add(ground);
+
+function resizeStage() {
+  const w = worldMount.clientWidth;
+  const h = worldMount.clientHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  if (overlayEl.width !== w || overlayEl.height !== h) {
+    overlayEl.width = w;
+    overlayEl.height = h;
+  }
+}
+window.addEventListener("resize", resizeStage);
+resizeStage();
+
+function animateWorld() {
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(animateWorld);
+}
+animateWorld();
 
 function setStatus(message, state = "ok") {
   statusEl.textContent = message;
@@ -55,114 +113,225 @@ async function createHandLandmarker() {
 }
 
 async function ensureLandmarkerReady() {
-  if (handLandmarker) {
-    return;
-  }
+  if (handLandmarker) return;
   setStatus("Loading MediaPipe model...", "ok");
   handLandmarker = await createHandLandmarker();
 }
 
-function syncCanvasToVideo() {
-  const { videoWidth, videoHeight } = webcamEl;
-  if (!videoWidth || !videoHeight) {
-    return;
-  }
-  if (overlayEl.width !== videoWidth || overlayEl.height !== videoHeight) {
-    overlayEl.width = videoWidth;
-    overlayEl.height = videoHeight;
-  }
-}
-
-function drawLandmarks(results) {
+function drawHands(results) {
   ctx.clearRect(0, 0, overlayEl.width, overlayEl.height);
-  if (!results?.landmarks?.length) {
-    return;
-  }
+  if (!results?.landmarks?.length) return;
 
-  results.landmarks.forEach((hand, handIndex) => {
-    const stroke = palette[handIndex % palette.length];
+  const colors = ["#39d0b8", "#7cc9ff"];
+  results.landmarks.forEach((hand, i) => {
+    const stroke = colors[i % colors.length];
     ctx.strokeStyle = stroke;
     ctx.fillStyle = stroke;
     ctx.lineWidth = 2;
 
     for (const [from, to] of HAND_CONNECTIONS) {
-      const start = hand[from];
-      const end = hand[to];
+      const s = hand[from];
+      const e = hand[to];
       ctx.beginPath();
-      ctx.moveTo(start.x * overlayEl.width, start.y * overlayEl.height);
-      ctx.lineTo(end.x * overlayEl.width, end.y * overlayEl.height);
+      ctx.moveTo((1 - s.x) * overlayEl.width, s.y * overlayEl.height);
+      ctx.lineTo((1 - e.x) * overlayEl.width, e.y * overlayEl.height);
       ctx.stroke();
     }
 
-    for (const point of hand) {
+    for (const p of hand) {
       ctx.beginPath();
-      ctx.arc(point.x * overlayEl.width, point.y * overlayEl.height, 4, 0, 2 * Math.PI);
+      ctx.arc((1 - p.x) * overlayEl.width, p.y * overlayEl.height, 3.6, 0, 2 * Math.PI);
       ctx.fill();
     }
   });
 }
 
-function detectLoop() {
-  if (!isRunning || !handLandmarker) {
+function handToWorldPoint(hand) {
+  const indexTip = hand[8];
+  const x = (0.5 - indexTip.x) * 10;
+  const z = (indexTip.y - 0.5) * 9;
+  const y = 0.4 + Math.max(0, Math.min(2.3, (0.5 - indexTip.z) * 1.8));
+  return new THREE.Vector3(x, y, z);
+}
+
+function isPinching(hand) {
+  const thumb = hand[4];
+  const index = hand[8];
+  const dx = thumb.x - index.x;
+  const dy = thumb.y - index.y;
+  const dz = thumb.z - index.z;
+  const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  return dist < 0.055;
+}
+
+function isFist(hand) {
+  const wrist = hand[0];
+  const tips = [8, 12, 16, 20].map((i) => hand[i]);
+  const meanDist = tips.reduce((acc, tip) => {
+    const dx = tip.x - wrist.x;
+    const dy = tip.y - wrist.y;
+    const dz = tip.z - wrist.z;
+    return acc + Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }, 0) / tips.length;
+  return meanDist < 0.18;
+}
+
+function buildGeometry(type, size) {
+  switch (type) {
+    case "cuboid":
+      return new THREE.BoxGeometry(size * 1.6, size, size * 0.9);
+    case "sphere":
+      return new THREE.SphereGeometry(size * 0.6, 28, 20);
+    case "cylinder":
+      return new THREE.CylinderGeometry(size * 0.45, size * 0.45, size * 1.4, 24);
+    case "cube":
+    default:
+      return new THREE.BoxGeometry(size, size, size);
+  }
+}
+
+function spawnShape(hand) {
+  const now = performance.now();
+  if (now - lastSpawnAt < spawnCooldownMs) return;
+  lastSpawnAt = now;
+
+  const size = Number(sizeInputEl.value);
+  const type = shapeTypeEl.value;
+  const geometry = buildGeometry(type, size);
+  const material = new THREE.MeshStandardMaterial({
+    color: colorInputEl.value,
+    roughness: 0.46,
+    metalness: 0.2,
+  });
+
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.copy(handToWorldPoint(hand));
+  mesh.rotation.set(Math.random() * 0.3, Math.random() * Math.PI, Math.random() * 0.3);
+
+  placedShapes.push(mesh);
+  scene.add(mesh);
+  setStatus(`Placed ${type}. Total: ${placedShapes.length}`, "ok");
+}
+
+function undoLastShape() {
+  const mesh = placedShapes.pop();
+  if (!mesh) return;
+  scene.remove(mesh);
+  mesh.geometry.dispose();
+  mesh.material.dispose();
+  setStatus(`Removed last shape. Remaining: ${placedShapes.length}`, "ok");
+}
+
+function clearShapes() {
+  while (placedShapes.length) {
+    const mesh = placedShapes.pop();
+    scene.remove(mesh);
+    mesh.geometry.dispose();
+    mesh.material.dispose();
+  }
+  setStatus("Cleared all shapes", "idle");
+}
+
+function processGestures(results) {
+  if (!results?.landmarks?.length) {
+    fistStartAt = null;
     return;
   }
 
-  syncCanvasToVideo();
+  const hand = results.landmarks[0];
+  if (isPinching(hand)) spawnShape(hand);
+
+  if (isFist(hand)) {
+    if (fistStartAt === null) fistStartAt = performance.now();
+    if (performance.now() - fistStartAt > 800) {
+      undoLastShape();
+      fistStartAt = null;
+    }
+  } else {
+    fistStartAt = null;
+  }
+}
+
+function detectLoop() {
+  if (!isRunning || !handLandmarker) return;
+
   if (webcamEl.readyState >= 2 && webcamEl.currentTime !== lastVideoTime) {
     lastVideoTime = webcamEl.currentTime;
     const results = handLandmarker.detectForVideo(webcamEl, performance.now());
-    drawLandmarks(results);
-    const handCount = results?.landmarks?.length ?? 0;
-    setStatus(handCount ? `Tracking ${handCount} hand(s)` : "No hands detected", "ok");
+    drawHands(results);
+    processGestures(results);
+
+    const count = results?.landmarks?.length ?? 0;
+    if (!count) setStatus("No hands detected", "idle");
   }
 
-  rafId = window.requestAnimationFrame(detectLoop);
+  rafId = requestAnimationFrame(detectLoop);
 }
 
 async function startTracking() {
-  if (isRunning) {
-    return;
-  }
+  if (isRunning) return;
   if (!navigator.mediaDevices?.getUserMedia) {
     setStatus("getUserMedia is not available in this browser.", "error");
     return;
   }
 
+  const isLocalhost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  if (!window.isSecureContext && !isLocalhost) {
+    setStatus("Camera requires HTTPS (or localhost).", "error");
+    return;
+  }
+
   try {
     await ensureLandmarkerReady();
-    webcamStream = await navigator.mediaDevices.getUserMedia({
+
+    const preferred = {
       audio: false,
-      video: {
-        facingMode: "user",
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-      },
-    });
+      video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+    };
+
+    try {
+      webcamStream = await navigator.mediaDevices.getUserMedia(preferred);
+    } catch {
+      webcamStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+    }
 
     webcamEl.srcObject = webcamStream;
+    webcamEl.autoplay = true;
+    webcamEl.muted = true;
+    webcamEl.playsInline = true;
+
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("Camera metadata timeout")), 4000);
+      webcamEl.onloadedmetadata = () => {
+        clearTimeout(t);
+        resolve();
+      };
+    });
+
     await webcamEl.play();
 
     startBtn.disabled = true;
     stopBtn.disabled = false;
     isRunning = true;
     lastVideoTime = -1;
-    setStatus("Camera active. Detecting landmarks...", "ok");
+    setStatus("Camera active. Pinch to spawn.", "ok");
     detectLoop();
-  } catch (error) {
-    console.error(error);
-    setStatus("Unable to start camera or model.", "error");
+  } catch (err) {
+    console.error(err);
+    const reason = err?.name || err?.message || "unknown error";
+    setStatus(`Unable to start camera/model: ${reason}`, "error");
   }
 }
 
 function stopTracking() {
   isRunning = false;
   if (rafId !== null) {
-    window.cancelAnimationFrame(rafId);
+    cancelAnimationFrame(rafId);
     rafId = null;
   }
 
   if (webcamStream) {
-    webcamStream.getTracks().forEach((track) => track.stop());
+    webcamStream.getTracks().forEach((t) => t.stop());
     webcamStream = null;
   }
 
@@ -175,4 +344,6 @@ function stopTracking() {
 
 startBtn.addEventListener("click", startTracking);
 stopBtn.addEventListener("click", stopTracking);
+undoBtn.addEventListener("click", undoLastShape);
+clearBtn.addEventListener("click", clearShapes);
 window.addEventListener("beforeunload", stopTracking);
