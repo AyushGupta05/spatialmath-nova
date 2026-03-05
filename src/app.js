@@ -66,6 +66,8 @@ export function bootstrapApp() {
   let prevPinch = false;
   let pinchConsumed = false;
   let pinchStableFrames = 0;
+  let smoothedPalm = null;
+  let smoothedFinger = null;
   let prevTwoHandAngle = null;
   let transformLocked = false;
   let activeMesh = null;
@@ -105,6 +107,19 @@ export function bootstrapApp() {
     if (snapToggleEl.value !== "on") return v;
     const step = Number(gridStepInputEl.value || 0.25);
     return Math.round(v / step) * step;
+  }
+
+  function smoothPoint(prev, point, alpha = 0.28) {
+    if (!point) return prev;
+    if (!prev) return point.clone();
+    prev.lerp(point, alpha);
+    return prev;
+  }
+
+  function applyDeadzone(current, target, dz = 0.045) {
+    if (!current) return target;
+    if (current.distanceTo(target) < dz) return current;
+    return target;
   }
 
   function shouldSnapPosition() {
@@ -347,8 +362,12 @@ export function bootstrapApp() {
       pipeline.setAlpha(dynamicAlpha);
 
       if (primary) {
-        const palmHit = world.projectToGround(primary[0]);
-        const fingerHit = world.projectToGround(primary[8]);
+        const palmHitRaw = world.projectToGround(primary[0]);
+        const fingerHitRaw = world.projectToGround(primary[8]);
+        smoothedPalm = smoothPoint(smoothedPalm, palmHitRaw, 0.24);
+        smoothedFinger = smoothPoint(smoothedFinger, fingerHitRaw, 0.3);
+        const palmHit = smoothedPalm;
+        const fingerHit = smoothedFinger;
 
         if (palmHit) {
           palmProxy.visible = true;
@@ -361,7 +380,7 @@ export function bootstrapApp() {
         else pinchStableFrames = 0;
 
         const pinchStart = interaction.pinch && !prevPinch;
-        const pinchConfirmed = interaction.pinch && pinchStableFrames >= 2;
+        const pinchConfirmed = interaction.pinch && pinchStableFrames >= 1;
 
         if ((pinchStart || (pinchConfirmed && !pinchConsumed)) && fingerHit && gestureModeEl.value === "spawn") {
           const mesh = world.buildMesh(shapeTypeEl.value, Number(sizeInputEl.value), colorInputEl.value);
@@ -387,8 +406,14 @@ export function bootstrapApp() {
         }
 
         if (interaction.pinch && activeMesh && palmHit && gestureModeEl.value === "transform") {
-          activeMesh.position.x = shouldSnapPosition() ? snapValue(palmHit.x) : palmHit.x;
-          activeMesh.position.z = shouldSnapPosition() ? snapValue(palmHit.z) : palmHit.z;
+          const nextPos = new THREE.Vector3(
+            shouldSnapPosition() ? snapValue(palmHit.x) : palmHit.x,
+            activeMesh.position.y,
+            shouldSnapPosition() ? snapValue(palmHit.z) : palmHit.z
+          );
+          const stablePos = applyDeadzone(activeMesh.position.clone(), nextPos, 0.05);
+          activeMesh.position.x = stablePos.x;
+          activeMesh.position.z = stablePos.z;
           activeMesh.rotation.y = snapRotation(interaction.rotation);
           rotationGuide.setDirection(new THREE.Vector3(Math.cos(activeMesh.rotation.y), 0, Math.sin(activeMesh.rotation.y)).normalize());
           rotationGuide.position.set(activeMesh.position.x, 0.05, activeMesh.position.z);
@@ -431,7 +456,11 @@ export function bootstrapApp() {
       }
 
       refreshDebug();
-      if (!handA) palmProxy.visible = false;
+      if (!primary) {
+        palmProxy.visible = false;
+        smoothedPalm = null;
+        smoothedFinger = null;
+      }
     }
 
     rafId = requestAnimationFrame(detectLoop);

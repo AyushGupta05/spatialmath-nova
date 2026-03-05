@@ -3,14 +3,14 @@ import { clamp, ema, dist3, angle2 } from "../core/math.js";
 export class InteractionPipeline {
   constructor(options = {}) {
     this.alpha = options.alpha ?? 0.38;
-    this.pinchOn = options.pinchOn ?? 0.055;
-    this.pinchOff = options.pinchOff ?? 0.07;
+    this.pinchOn = options.pinchOn ?? 0.03;
+    this.pinchOff = options.pinchOff ?? 0.042;
     this.prevResize = 0;
     this.prevRotation = 0;
     this.prevJitter = 0;
     this.prevIndex = null;
     this.pinch = false;
-    this.pinchOnFrames = options.pinchOnFrames ?? 2;
+    this.pinchOnFrames = options.pinchOnFrames ?? 1;
     this.pinchOffFrames = options.pinchOffFrames ?? 2;
     this._pinchOnCounter = 0;
     this._pinchOffCounter = 0;
