@@ -51,6 +51,7 @@ export function bootstrapApp() {
   let transformLocked = false;
   let activeMesh = null;
   const placedMeshes = [];
+  const MAX_MESHES = 220;
 
   const selectionRing = world.createSelectionRing();
   world.scene.add(selectionRing);
@@ -161,6 +162,14 @@ export function bootstrapApp() {
     world.scene.remove(mesh);
     mesh.geometry?.dispose?.();
     mesh.material?.dispose?.();
+  }
+
+  function enforceMeshBudget() {
+    while (placedMeshes.length > MAX_MESHES) {
+      const old = placedMeshes.shift();
+      removeMesh(old);
+      if (activeMesh === old) setActiveMesh(null);
+    }
   }
 
   function undo() {
@@ -275,6 +284,7 @@ export function bootstrapApp() {
           world.scene.add(mesh);
           setActiveMesh(mesh);
           placedMeshes.push(mesh);
+          enforceMeshBudget();
           setStatus(`Placed ${shapeTypeEl.value}`, "ok");
         }
 
@@ -353,6 +363,14 @@ export function bootstrapApp() {
     setStatus("Stopped", "idle");
     setIntent("stopped", "idle");
   }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && running) {
+      stop();
+      setStatus("Paused (tab hidden)", "idle");
+      setIntent("paused", "idle");
+    }
+  });
 
   smoothingInputEl.addEventListener("input", () => {
     const alpha = Number(smoothingInputEl.value);

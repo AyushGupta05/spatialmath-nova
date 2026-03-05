@@ -20,6 +20,9 @@ MediaPipe Hands + Three.js prototype for gesture-based 3D shape creation.
 - Shape types: cube, cuboid, sphere, cylinder
 - Adjustable base size + color
 - Scene save/load JSON for quick demo resets
+- Transform precision controls: position/rotation snap modes + rotation step
+- Live interaction intent badge for user guidance
+- Long-session guardrails: mesh budget + auto-pause on hidden tab
 
 ## Offline tuning (Python)
 Use `tools/signal_tuner.py` to tune EMA and pinch hysteresis from recorded CSV traces.
