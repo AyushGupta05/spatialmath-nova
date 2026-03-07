@@ -3,13 +3,15 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 export function createWorld(container) {
   const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x020815);
+  scene.fog = new THREE.FogExp2(0x020815, 0.014);
 
   const camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.1, 100);
   camera.position.set(10.5, 9.5, 10.5);
   camera.lookAt(0, 0, 0);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setClearColor(0xffffff, 0);
+  renderer.setClearColor(0x020815, 1);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
 
@@ -27,41 +29,63 @@ export function createWorld(container) {
   controls.target.set(0, 0, 0);
   controls.update();
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xd6ecff, 1.55));
+  scene.add(new THREE.HemisphereLight(0xf1ffff, 0x071320, 1.2));
 
-  const keyLight = new THREE.DirectionalLight(0x8ed7ff, 1.05);
+  const keyLight = new THREE.DirectionalLight(0x90fff2, 1.15);
   keyLight.position.set(7, 12, 9);
   scene.add(keyLight);
 
-  const fillLight = new THREE.DirectionalLight(0xffffff, 0.45);
+  const fillLight = new THREE.DirectionalLight(0x4da5ff, 0.42);
   fillLight.position.set(-8, 8, -5);
   scene.add(fillLight);
 
-  const rimLight = new THREE.PointLight(0x72d9ff, 0.45, 30, 2);
-  rimLight.position.set(0, 6, 0);
+  const rimLight = new THREE.PointLight(0x7cf7e4, 0.55, 36, 2);
+  rimLight.position.set(0, 7, 0);
   scene.add(rimLight);
 
-  const grid = new THREE.GridHelper(30, 12, 0x25bfff, 0x86ceff);
-  grid.position.y = 0.001;
-  const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
-  gridMaterials.forEach((material, index) => {
+  const fineGrid = new THREE.GridHelper(720, 288, 0x2b4d79, 0x2b4d79);
+  fineGrid.position.y = 0.001;
+  const fineMaterials = Array.isArray(fineGrid.material) ? fineGrid.material : [fineGrid.material];
+  fineMaterials.forEach((material) => {
     material.transparent = true;
-    material.opacity = index === 0 ? 0.2 : 0.08;
+    material.opacity = 0.17;
   });
-  scene.add(grid);
+  scene.add(fineGrid);
 
-  const stageDisc = new THREE.Mesh(
-    new THREE.CircleGeometry(10.5, 72),
+  const majorGrid = new THREE.GridHelper(720, 72, 0x92d8ff, 0x4b8fff);
+  majorGrid.position.y = 0.002;
+  const majorMaterials = Array.isArray(majorGrid.material) ? majorGrid.material : [majorGrid.material];
+  majorMaterials.forEach((material, index) => {
+    material.transparent = true;
+    material.opacity = index === 0 ? 0.42 : 0.28;
+  });
+  scene.add(majorGrid);
+
+  const stagePlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(1200, 1200),
     new THREE.MeshBasicMaterial({
-      color: 0xb9e8ff,
+      color: 0x06111f,
       transparent: true,
-      opacity: 0.08,
+      opacity: 0.96,
       side: THREE.DoubleSide,
     })
   );
-  stageDisc.rotation.x = -Math.PI / 2;
-  stageDisc.position.y = -0.002;
-  scene.add(stageDisc);
+  stagePlane.rotation.x = -Math.PI / 2;
+  stagePlane.position.y = -0.006;
+  scene.add(stagePlane);
+
+  const centerGlow = new THREE.Mesh(
+    new THREE.CircleGeometry(12, 72),
+    new THREE.MeshBasicMaterial({
+      color: 0x7cf7e4,
+      transparent: true,
+      opacity: 0.06,
+      side: THREE.DoubleSide,
+    })
+  );
+  centerGlow.rotation.x = -Math.PI / 2;
+  centerGlow.position.y = -0.001;
+  scene.add(centerGlow);
 
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
@@ -95,10 +119,12 @@ export function createWorld(container) {
     const tone = new THREE.Color(color);
     const material = new THREE.MeshStandardMaterial({
       color: tone,
-      roughness: 0.18,
-      metalness: 0.12,
+      roughness: 0.24,
+      metalness: 0.08,
       emissive: tone.clone().multiplyScalar(0.12),
-      emissiveIntensity: 0.52,
+      emissiveIntensity: 0.38,
+      transparent: true,
+      opacity: 0.9,
     });
     const mesh = new THREE.Mesh(geometry, material);
     const bbox = new THREE.Box3().setFromObject(mesh);
@@ -110,7 +136,7 @@ export function createWorld(container) {
   function createSelectionRing() {
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.28, 0.34, 48),
-      new THREE.MeshBasicMaterial({ color: 0x10b7ff, transparent: true, opacity: 0.95, side: THREE.DoubleSide })
+      new THREE.MeshBasicMaterial({ color: 0x7cf7e4, transparent: true, opacity: 0.95, side: THREE.DoubleSide })
     );
     ring.rotation.x = -Math.PI / 2;
     ring.visible = false;
@@ -120,7 +146,7 @@ export function createWorld(container) {
   function createRotationGuide() {
     const dir = new THREE.Vector3(1, 0, 0);
     const origin = new THREE.Vector3(0, 0.05, 0);
-    const arrow = new THREE.ArrowHelper(dir, origin, 0.9, 0x08a9ff, 0.18, 0.11);
+    const arrow = new THREE.ArrowHelper(dir, origin, 0.9, 0xffde72, 0.18, 0.11);
     arrow.visible = false;
     return arrow;
   }

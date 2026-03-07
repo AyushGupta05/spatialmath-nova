@@ -184,7 +184,7 @@
 
             <label class="field">
               <span>Color</span>
-              <input id="colorInput" type="color" value="#00a6ff" />
+              <input id="colorInput" type="color" value="#7cf7e4" />
             </label>
           </section>
 
@@ -210,24 +210,6 @@
 
         <section class="graph-panel">
           <div class="stage-wrap">
-            <div class="graph-axis axis-y" aria-hidden="true"></div>
-            <div class="graph-axis axis-x" aria-hidden="true"></div>
-
-            <div class="graph-float graph-float-top" aria-hidden="true">
-              <span class="float-chip">xy</span>
-            </div>
-
-            <div class="graph-zoom" aria-hidden="true">
-              <button type="button">+</button>
-              <button type="button">-</button>
-              <button type="button">&#x2922;</button>
-            </div>
-
-            <div class="graph-prompt" aria-hidden="true">
-              <span class="prompt-dot"></span>
-              <span>Camera overlay live</span>
-            </div>
-
             <div class="stage" id="worldMount"></div>
             <canvas id="overlay"></canvas>
             <video id="webcam" autoplay playsinline muted></video>

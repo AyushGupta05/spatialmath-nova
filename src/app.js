@@ -113,7 +113,7 @@ export function bootstrapApp() {
       if (activeMesh.userData.baseEmissive == null) {
         activeMesh.userData.baseEmissive = activeMesh.material.emissive.getHex();
       }
-      activeMesh.material.emissive.setHex(0x0a6dbe);
+      activeMesh.material.emissive.setHex(0x2ccbd3);
     }
     if (!activeMesh) {
       selectionRing.visible = false;
@@ -299,20 +299,31 @@ export function bootstrapApp() {
   function drawPlacementReticle(x, y, radius) {
     const isSquareReticle = shapeTypeEl.value === "cube";
     ctx.save();
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = "#08adff";
-    ctx.shadowBlur = 18;
-    ctx.shadowColor = "rgba(8, 173, 255, 0.8)";
+    ctx.lineWidth = 2.2;
+    ctx.strokeStyle = "#6fb8ff";
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = "rgba(111, 184, 255, 0.9)";
     if (isSquareReticle) {
       const side = radius * 1.8;
       const half = side * 0.5;
       ctx.strokeRect(x - half, y - half, side, side);
-      ctx.restore();
-      return;
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.stroke();
     }
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.stroke();
+
+    ctx.lineWidth = 1.1;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.92)";
+    if (isSquareReticle) {
+      const side = radius * 1.42;
+      const half = side * 0.5;
+      ctx.strokeRect(x - half, y - half, side, side);
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, Math.max(5, radius - 2.4), 0, Math.PI * 2);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -320,7 +331,7 @@ export function bootstrapApp() {
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.fillStyle = fill;
-    ctx.shadowBlur = radius * 2.2;
+    ctx.shadowBlur = radius * 2.5;
     ctx.shadowColor = glow;
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
@@ -332,58 +343,57 @@ export function bootstrapApp() {
     ctx.clearRect(0, 0, overlayEl.width, overlayEl.height);
     if (!hands?.length) return;
 
-    const colors = ["#12d9ff", "#2f7dff"];
+    const colors = ["#b9f6ff", "#8bc8ff"];
 
     ctx.globalCompositeOperation = "source-over";
 
     hands.forEach((hand, i) => {
       const color = colors[i % colors.length];
       const isPrimary = hand === primaryHand;
-      ctx.lineWidth = isPrimary ? 3.4 : 2.1;
-      ctx.globalAlpha = isPrimary ? 0.9 : 0.55;
-      ctx.shadowBlur = isPrimary ? 14 : 5;
+      ctx.lineWidth = isPrimary ? 3.2 : 2.1;
+      ctx.globalAlpha = isPrimary ? 0.96 : 0.7;
+      ctx.shadowBlur = isPrimary ? 10 : 5;
       ctx.shadowColor = color;
       ctx.setLineDash([]);
-
-      const grad = ctx.createLinearGradient(0, 0, overlayEl.width, overlayEl.height);
-      grad.addColorStop(0, color);
-      grad.addColorStop(1, "rgba(255,255,255,0.15)");
-      ctx.strokeStyle = grad;
+      ctx.strokeStyle = color;
 
       for (const [a, b] of HAND_CONNECTIONS) {
         const p1 = hand[a];
         const p2 = hand[b];
+        const x1 = (1 - p1.x) * overlayEl.width;
+        const y1 = p1.y * overlayEl.height;
+        const x2 = (1 - p2.x) * overlayEl.width;
+        const y2 = p2.y * overlayEl.height;
 
-        if (isPrimary) {
-          ctx.save();
-          ctx.lineWidth = 7;
-          ctx.globalAlpha = 0.16;
-          ctx.strokeStyle = color;
-          ctx.shadowBlur = 0;
-          ctx.beginPath();
-          ctx.moveTo((1 - p1.x) * overlayEl.width, p1.y * overlayEl.height);
-          ctx.lineTo((1 - p2.x) * overlayEl.width, p2.y * overlayEl.height);
-          ctx.stroke();
-          ctx.restore();
-        }
+        ctx.save();
+        ctx.lineWidth = isPrimary ? 7.2 : 4.8;
+        ctx.globalAlpha = isPrimary ? 0.18 : 0.12;
+        ctx.strokeStyle = color;
+        ctx.shadowBlur = isPrimary ? 16 : 8;
+        ctx.shadowColor = color;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.restore();
 
         ctx.beginPath();
-        ctx.moveTo((1 - p1.x) * overlayEl.width, p1.y * overlayEl.height);
-        ctx.lineTo((1 - p2.x) * overlayEl.width, p2.y * overlayEl.height);
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
         ctx.stroke();
+
       }
 
       hand.forEach((point, pointIndex) => {
         const x = (1 - point.x) * overlayEl.width;
         const y = point.y * overlayEl.height;
         const isFingertip = [4, 8, 12, 16, 20].includes(pointIndex);
-        const isAnchor = pointIndex === 0 || pointIndex === 5 || pointIndex === 9 || pointIndex === 17;
         const radius = isPrimary
-          ? (isFingertip ? 5.2 : isAnchor ? 4.2 : 2.8)
-          : (isFingertip ? 3.2 : 2.1);
-        const fill = isPrimary ? "#e9fbff" : "#9fdcff";
-        const glow = isPrimary ? color : "rgba(47, 125, 255, 0.4)";
-        const alpha = isPrimary ? (isFingertip ? 1 : 0.88) : 0.62;
+          ? (isFingertip ? 6.8 : 5.1)
+          : (isFingertip ? 4.2 : 3.2);
+        const fill = isPrimary ? "#ffffff" : "#f3fbff";
+        const glow = isPrimary ? "rgba(185, 246, 255, 0.92)" : "rgba(139, 200, 255, 0.72)";
+        const alpha = isPrimary ? 0.98 : 0.8;
         drawLandmarkDot(x, y, radius, fill, glow, alpha);
       });
 
@@ -396,7 +406,7 @@ export function bootstrapApp() {
         ctx.setLineDash([]);
         drawPlacementReticle(contactX, contactY, pulse);
 
-        drawLandmarkDot(contactX, contactY, 6.2, "#ffffff", "rgba(8, 173, 255, 0.9)", 0.96);
+        drawLandmarkDot(contactX, contactY, 6.8, "#ffffff", "rgba(185, 246, 255, 0.95)", 1);
       }
     });
 
@@ -511,7 +521,7 @@ export function bootstrapApp() {
   function loadScene(data) {
     clearAll();
     data.forEach((item) => {
-      const mesh = world.buildMesh(item.shape || "cube", Number(item.baseSize || 1), item.color || "#00a6ff");
+      const mesh = world.buildMesh(item.shape || "cube", Number(item.baseSize || 1), item.color || "#7cf7e4");
       mesh.position.fromArray(item.position || [0, 0.5, 0]);
       mesh.rotation.y = Number(item.rotationY || 0);
       if (Array.isArray(item.scale)) mesh.scale.fromArray(item.scale);
