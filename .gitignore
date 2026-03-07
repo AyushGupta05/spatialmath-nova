@@ -1,3 +1,7 @@
 .venv/
 .mplconfig/
 __pycache__/
+.cache/
+.keras/
+.local/
+models/tf_gesture/
