@@ -16,7 +16,7 @@ MediaPipe Hands + Three.js prototype for gesture-based 3D shape creation.
 - Gesture actions:
   - Spawn mode: pinch (thumb + index) → place selected shape
   - Transform mode: pinch near object to grab/move; spread index-middle fingers to scale
-  - Fist hold (~0.8s) → undo last shape
+  - Fist → delete the object closest to the palm
 - Shape types: cube, cuboid, sphere, cylinder
 - Adjustable base size + color
 - Scene save/load JSON for quick demo resets
@@ -46,7 +46,7 @@ python3 tools/stress_simulator.py
 ## TensorFlow gesture signal model
 Train a 6-class gesture classifier for project signals:
 - pinch_place (thumb+index) → place object
-- fist_delete → delete object
+- fist_delete → delete object nearest to palm
 - open_palm_cycle → change shape
 - peace_draw → draw lines
 - point_rotate → rotate object

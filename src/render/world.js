@@ -3,33 +3,65 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 export function createWorld(container) {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x050a12);
 
-  const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 100);
-  camera.position.set(0, 4.5, 8.5);
+  const camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.1, 100);
+  camera.position.set(10.5, 9.5, 10.5);
+  camera.lookAt(0, 0, 0);
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setClearColor(0xffffff, 0);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.target.set(0, 1.2, 0);
+  controls.dampingFactor = 0.08;
+  controls.enableRotate = true;
+  controls.enablePan = false;
+  controls.rotateSpeed = 0.8;
+  controls.minDistance = 7;
+  controls.maxDistance = 26;
+  controls.minPolarAngle = 0.55;
+  controls.maxPolarAngle = 1.35;
+  controls.zoomSpeed = 0.9;
+  controls.target.set(0, 0, 0);
+  controls.update();
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-  const dir = new THREE.DirectionalLight(0xffffff, 0.95);
-  dir.position.set(5, 7, 3);
-  scene.add(dir);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xd6ecff, 1.55));
 
-  scene.add(new THREE.GridHelper(18, 18, 0x335566, 0x223344));
+  const keyLight = new THREE.DirectionalLight(0x8ed7ff, 1.05);
+  keyLight.position.set(7, 12, 9);
+  scene.add(keyLight);
 
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(18, 18),
-    new THREE.MeshStandardMaterial({ color: 0x0b1320, metalness: 0.05, roughness: 0.9 })
+  const fillLight = new THREE.DirectionalLight(0xffffff, 0.45);
+  fillLight.position.set(-8, 8, -5);
+  scene.add(fillLight);
+
+  const rimLight = new THREE.PointLight(0x72d9ff, 0.45, 30, 2);
+  rimLight.position.set(0, 6, 0);
+  scene.add(rimLight);
+
+  const grid = new THREE.GridHelper(30, 12, 0x25bfff, 0x86ceff);
+  grid.position.y = 0.001;
+  const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
+  gridMaterials.forEach((material, index) => {
+    material.transparent = true;
+    material.opacity = index === 0 ? 0.2 : 0.08;
+  });
+  scene.add(grid);
+
+  const stageDisc = new THREE.Mesh(
+    new THREE.CircleGeometry(10.5, 72),
+    new THREE.MeshBasicMaterial({
+      color: 0xb9e8ff,
+      transparent: true,
+      opacity: 0.08,
+      side: THREE.DoubleSide,
+    })
   );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.01;
-  scene.add(ground);
+  stageDisc.rotation.x = -Math.PI / 2;
+  stageDisc.position.y = -0.002;
+  scene.add(stageDisc);
 
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
@@ -60,7 +92,14 @@ export function createWorld(container) {
       default: geometry = new THREE.BoxGeometry(size, size, size);
     }
 
-    const material = new THREE.MeshStandardMaterial({ color, roughness: 0.46, metalness: 0.2 });
+    const tone = new THREE.Color(color);
+    const material = new THREE.MeshStandardMaterial({
+      color: tone,
+      roughness: 0.18,
+      metalness: 0.12,
+      emissive: tone.clone().multiplyScalar(0.12),
+      emissiveIntensity: 0.52,
+    });
     const mesh = new THREE.Mesh(geometry, material);
     const bbox = new THREE.Box3().setFromObject(mesh);
     const halfHeight = (bbox.max.y - bbox.min.y) / 2;
@@ -71,7 +110,7 @@ export function createWorld(container) {
   function createSelectionRing() {
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.28, 0.34, 48),
-      new THREE.MeshBasicMaterial({ color: 0x7df9d8, transparent: true, opacity: 0.9, side: THREE.DoubleSide })
+      new THREE.MeshBasicMaterial({ color: 0x10b7ff, transparent: true, opacity: 0.95, side: THREE.DoubleSide })
     );
     ring.rotation.x = -Math.PI / 2;
     ring.visible = false;
@@ -81,7 +120,7 @@ export function createWorld(container) {
   function createRotationGuide() {
     const dir = new THREE.Vector3(1, 0, 0);
     const origin = new THREE.Vector3(0, 0.05, 0);
-    const arrow = new THREE.ArrowHelper(dir, origin, 0.9, 0xffd166, 0.18, 0.11);
+    const arrow = new THREE.ArrowHelper(dir, origin, 0.9, 0x08a9ff, 0.18, 0.11);
     arrow.visible = false;
     return arrow;
   }
@@ -91,13 +130,13 @@ export function createWorld(container) {
 
     const disc = new THREE.Mesh(
       new THREE.CylinderGeometry(0.18, 0.18, 0.03, 24),
-      new THREE.MeshStandardMaterial({ color: 0x7cc9ff, transparent: true, opacity: 0.8 })
+      new THREE.MeshStandardMaterial({ color: 0x3ac4ff, transparent: true, opacity: 0.82 })
     );
     disc.position.y = 0.03;
 
     const pointer = new THREE.Mesh(
       new THREE.ConeGeometry(0.09, 0.3, 18),
-      new THREE.MeshStandardMaterial({ color: 0xffd166, transparent: true, opacity: 0.9 })
+      new THREE.MeshStandardMaterial({ color: 0x087dff, transparent: true, opacity: 0.92 })
     );
     pointer.rotation.x = Math.PI;
     pointer.position.set(0, 0.18, 0.2);

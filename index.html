@@ -3,7 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SpatialMath Nova — Hand Sculpt</title>
+    <title>SpatialMath Nova - Hand Sculpt</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="./styles.css" />
     <script type="importmap">
       {
@@ -16,137 +22,212 @@
   </head>
   <body>
     <main class="app-shell">
-      <header class="hero">
-        <p class="eyebrow">SpatialMath Nova</p>
-        <h1>Hand Sculpt Studio</h1>
-        <p class="subhead">Pinch to place 3D shapes in a live Three.js world powered by MediaPipe Hands.</p>
-      </header>
+      <header class="topbar">
+        <div class="brand-lockup">
+          <p class="eyebrow">SpatialMath Nova</p>
+          <h1>Neon Graph Sculpt</h1>
+        </div>
 
-      <section class="layout">
-        <aside class="panel controls-panel">
-          <h2>Build Controls</h2>
-
-          <div class="controls-row">
-            <button id="startBtn" class="btn btn-primary">Start Camera</button>
-            <button id="stopBtn" class="btn" disabled>Stop</button>
-          </div>
-
-          <label class="field">
-            <span>Shape</span>
-            <select id="shapeType">
-              <option value="cube">Cube</option>
-              <option value="cuboid">Cuboid</option>
-              <option value="sphere">Sphere</option>
-              <option value="cylinder">Cylinder</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Gesture Mode</span>
-            <select id="gestureMode">
-              <option value="spawn">Spawn</option>
-              <option value="transform">Transform</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Base Size</span>
-            <input id="sizeInput" type="range" min="0.2" max="2.5" step="0.05" value="0.9" />
-          </label>
-
-          <label class="field">
-            <span>Color</span>
-            <input id="colorInput" type="color" value="#39d0b8" />
-          </label>
-
-          <label class="field">
-            <span>Smoothing Alpha</span>
-            <input id="smoothingInput" type="range" min="0.1" max="0.9" step="0.01" value="0.38" />
-          </label>
-
-          <label class="field">
-            <span>Tracking Profile</span>
-            <select id="trackingProfile">
-              <option value="balanced">Balanced</option>
-              <option value="stable">Stable (less jitter)</option>
-              <option value="responsive">Responsive (lower latency)</option>
-            </select>
-          </label>
-
-          <div class="controls-row">
-            <button id="calibrateBtn" class="btn">Calibrate Pose</button>
-          </div>
-
-          <label class="field">
-            <span>Calibration Preset</span>
-            <select id="calibrationPreset">
-              <option value="custom">Custom</option>
-              <option value="desk">Desk / Near camera</option>
-              <option value="room">Room / Mid distance</option>
-              <option value="far">Far / Full body range</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Snap to Grid</span>
-            <select id="snapToggle">
-              <option value="off">Off</option>
-              <option value="on">On</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Grid Step</span>
-            <input id="gridStepInput" type="range" min="0.1" max="1.0" step="0.05" value="0.25" />
-          </label>
-
-          <label class="field">
-            <span>Transform Snap</span>
-            <select id="transformSnapMode">
-              <option value="off">Off</option>
-              <option value="position">Position only</option>
-              <option value="rotation">Rotation only</option>
-              <option value="all">Position + Rotation</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Transform Lock</span>
-            <select id="transformLockMode">
-              <option value="hold">Hold (release on pinch end)</option>
-              <option value="sticky">Sticky (stays selected)</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>Rotation Step (deg)</span>
-            <input id="rotationStepInput" type="range" min="5" max="45" step="1" value="15" />
-          </label>
-
-          <div class="controls-row">
-            <button id="undoBtn" class="btn">Undo Last</button>
-            <button id="clearBtn" class="btn btn-danger">Clear All</button>
-          </div>
-
-          <div class="controls-row">
-            <button id="saveSceneBtn" class="btn">Save Scene</button>
-            <button id="loadSceneBtn" class="btn">Load Scene</button>
+        <div class="topbar-tools">
+          <div class="tool-cluster" aria-label="Primary tools">
+            <button id="startBtn" class="tool-btn is-start" data-tooltip="Start">
+              <span class="tool-label">Start</span>
+            </button>
+            <button id="stopBtn" class="tool-btn is-stop" data-tooltip="Stop" disabled>
+              <span class="tool-label">Stop</span>
+            </button>
+            <button id="undoBtn" class="tool-btn is-undo" data-tooltip="Undo">
+              <span class="tool-label">Undo</span>
+            </button>
+            <button id="clearBtn" class="tool-btn is-clear" data-tooltip="Clear">
+              <span class="tool-label">Clear</span>
+            </button>
+            <button id="saveSceneBtn" class="tool-btn is-save" data-tooltip="Save">
+              <span class="tool-label">Save</span>
+            </button>
+            <button id="loadSceneBtn" class="tool-btn is-load" data-tooltip="Load">
+              <span class="tool-label">Load</span>
+            </button>
             <input id="loadSceneInput" type="file" accept="application/json" hidden />
           </div>
 
-          <p id="status" class="status" data-state="idle">Idle</p>
-          <p id="intentBadge" class="status" data-state="idle">Intent: waiting</p>
-          <pre id="debugState" class="debug-box">{ "handsDetected": false }</pre>
-          <ul class="hint-list">
-            <li><strong>Pinch</strong> (thumb + index) to spawn shape at hand position.</li>
-            <li><strong>Transform mode:</strong> pinch near an object to grab/move it.</li>
-            <li><strong>Fist hold</strong> (~0.8s) deletes the last shape.</li>
-            <li>Use mouse drag on the 3D canvas to orbit.</li>
-          </ul>
+          <details class="advanced-menu">
+            <summary class="tool-btn is-menu" data-tooltip="Advanced">
+              <span class="tool-label">Advanced</span>
+            </summary>
+
+            <div class="advanced-panel">
+              <label class="field">
+                <span>Smoothing</span>
+                <select id="smoothingInput">
+                  <option value="0.24">Responsive</option>
+                  <option value="0.38" selected>Balanced</option>
+                  <option value="0.52">Stable</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Profile</span>
+                <select id="trackingProfile">
+                  <option value="balanced">Balanced</option>
+                  <option value="stable">Stable</option>
+                  <option value="responsive">Responsive</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Preset</span>
+                <select id="calibrationPreset">
+                  <option value="custom">Custom</option>
+                  <option value="desk">Desk</option>
+                  <option value="room">Room</option>
+                  <option value="far">Far</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Snap</span>
+                <select id="snapToggle">
+                  <option value="off">Off</option>
+                  <option value="on">On</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Grid Step</span>
+                <select id="gridStepInput">
+                  <option value="0.1">0.10</option>
+                  <option value="0.25" selected>0.25</option>
+                  <option value="0.5">0.50</option>
+                  <option value="1.0">1.00</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Transform Snap</span>
+                <select id="transformSnapMode">
+                  <option value="off">Off</option>
+                  <option value="position">Position</option>
+                  <option value="rotation">Rotation</option>
+                  <option value="all">All</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Transform Lock</span>
+                <select id="transformLockMode">
+                  <option value="hold">Hold</option>
+                  <option value="sticky">Sticky</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Rotation Step</span>
+                <select id="rotationStepInput">
+                  <option value="5">5 deg</option>
+                  <option value="10">10 deg</option>
+                  <option value="15" selected>15 deg</option>
+                  <option value="30">30 deg</option>
+                  <option value="45">45 deg</option>
+                </select>
+              </label>
+
+              <button id="calibrateBtn" class="panel-btn" type="button">Capture calibration</button>
+            </div>
+          </details>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="algebra-panel">
+          <div class="algebra-input">
+            <button class="sidebar-plus" type="button" aria-hidden="true" tabindex="-1">+</button>
+            <div class="input-entry">
+              <span class="input-placeholder">Input...</span>
+              <span class="input-cursor" aria-hidden="true"></span>
+            </div>
+          </div>
+
+          <section class="algebra-card controls-card">
+            <div class="card-heading">
+              <h2>Construction</h2>
+              <span class="pill subtle">Neo</span>
+            </div>
+
+            <label class="field">
+              <span>Shape</span>
+              <select id="shapeType">
+                <option value="cube">Cube</option>
+                <option value="cuboid">Cuboid</option>
+                <option value="sphere">Sphere</option>
+                <option value="cylinder">Cylinder</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Mode</span>
+              <select id="gestureMode">
+                <option value="spawn">Spawn</option>
+                <option value="transform">Transform</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Size</span>
+              <select id="sizeInput">
+                <option value="0.5">S</option>
+                <option value="0.9" selected>M</option>
+                <option value="1.3">L</option>
+                <option value="1.8">XL</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Color</span>
+              <input id="colorInput" type="color" value="#00a6ff" />
+            </label>
+          </section>
+
+          <section class="algebra-card status-card">
+            <div class="card-heading">
+              <h2>Session</h2>
+              <span class="pill subtle">Live</span>
+            </div>
+            <p id="status" class="status" data-state="idle">Idle</p>
+            <p id="intentBadge" class="status" data-state="idle">Intent: waiting</p>
+          </section>
+
+          <section class="algebra-card object-card">
+            <div class="card-heading">
+              <h2>Objects</h2>
+              <span id="objectCount" class="pill">0</span>
+            </div>
+            <div id="objectList" class="object-list"></div>
+          </section>
+
+          <pre id="debugState" class="debug-box hidden">{ "handsDetected": false }</pre>
         </aside>
 
-        <section class="panel studio-panel">
+        <section class="graph-panel">
           <div class="stage-wrap">
+            <div class="graph-axis axis-y" aria-hidden="true"></div>
+            <div class="graph-axis axis-x" aria-hidden="true"></div>
+
+            <div class="graph-float graph-float-top" aria-hidden="true">
+              <span class="float-chip">xy</span>
+            </div>
+
+            <div class="graph-zoom" aria-hidden="true">
+              <button type="button">+</button>
+              <button type="button">-</button>
+              <button type="button">&#x2922;</button>
+            </div>
+
+            <div class="graph-prompt" aria-hidden="true">
+              <span class="prompt-dot"></span>
+              <span>Camera overlay live</span>
+            </div>
+
             <div class="stage" id="worldMount"></div>
             <canvas id="overlay"></canvas>
             <video id="webcam" autoplay playsinline muted></video>

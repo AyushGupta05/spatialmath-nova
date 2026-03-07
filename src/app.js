@@ -11,7 +11,7 @@ const HAND_CONNECTIONS = [
   [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
   [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]
 ];
-const SHOW_HAND_MARKERS = false;
+const SHOW_HAND_MARKERS = true;
 const PALM_CENTER_INDEXES = [0, 5, 9, 13, 17];
 const SPAWN_COOLDOWN_MS = 220;
 const FIST_DELETE_COOLDOWN_MS = 420;
@@ -61,6 +61,8 @@ export function bootstrapApp() {
   const debugStateEl = document.querySelector("#debugState");
   const intentBadgeEl = document.querySelector("#intentBadge");
   const statusEl = document.querySelector("#status");
+  const objectListEl = document.querySelector("#objectList");
+  const objectCountEl = document.querySelector("#objectCount");
 
   const ctx = overlayEl.getContext("2d");
   const world = createWorld(worldMount);
@@ -102,18 +104,28 @@ export function bootstrapApp() {
 
   function setActiveMesh(mesh) {
     if (activeMesh === mesh) return;
-    if (activeMesh?.material?.emissive) activeMesh.material.emissive.setHex(0x000000);
+    if (activeMesh?.material?.emissive) {
+      const baseEmissive = activeMesh.userData?.baseEmissive ?? 0x00111d;
+      activeMesh.material.emissive.setHex(baseEmissive);
+    }
     activeMesh = mesh;
-    if (activeMesh?.material?.emissive) activeMesh.material.emissive.setHex(0x113333);
+    if (activeMesh?.material?.emissive) {
+      if (activeMesh.userData.baseEmissive == null) {
+        activeMesh.userData.baseEmissive = activeMesh.material.emissive.getHex();
+      }
+      activeMesh.material.emissive.setHex(0x0a6dbe);
+    }
     if (!activeMesh) {
       selectionRing.visible = false;
       rotationGuide.visible = false;
+      renderObjectList();
       return;
     }
     selectionRing.visible = true;
     selectionRing.position.set(activeMesh.position.x, 0.02, activeMesh.position.z);
     rotationGuide.visible = true;
     rotationGuide.position.set(activeMesh.position.x, 0.05, activeMesh.position.z);
+    renderObjectList();
   }
 
   function snapValue(v) {
@@ -243,6 +255,38 @@ export function bootstrapApp() {
     statusEl.dataset.state = state;
   }
 
+  function fmt(n) {
+    return Number.isFinite(n) ? Number(n).toFixed(2) : "0.00";
+  }
+
+  function renderObjectList() {
+    if (!objectListEl || !objectCountEl) return;
+
+    objectCountEl.textContent = String(placedMeshes.length);
+    if (!placedMeshes.length) {
+      objectListEl.innerHTML = `<div class="object-meta">No objects placed yet.</div>`;
+      return;
+    }
+
+    objectListEl.innerHTML = placedMeshes.map((mesh, idx) => {
+      const shape = mesh.userData?.shape || "mesh";
+      const pos = mesh.position || { x: 0, y: 0, z: 0 };
+      const scale = mesh.scale || { x: 1, y: 1, z: 1 };
+      return `
+        <article class="object-item">
+          <div class="object-title">
+            <strong>${idx + 1}. ${shape}</strong>
+            <span>${mesh === activeMesh ? "active" : ""}</span>
+          </div>
+          <div class="object-meta">
+            pos: (${fmt(pos.x)}, ${fmt(pos.y)}, ${fmt(pos.z)})<br/>
+            scale: (${fmt(scale.x)}, ${fmt(scale.y)}, ${fmt(scale.z)})
+          </div>
+        </article>
+      `;
+    }).join("");
+  }
+
   function setIntent(msg, state = "idle") {
     intentBadgeEl.textContent = `Intent: ${msg}`;
     intentBadgeEl.dataset.state = state;
@@ -254,32 +298,50 @@ export function bootstrapApp() {
 
   function drawPlacementReticle(x, y, radius) {
     const isSquareReticle = shapeTypeEl.value === "cube";
-    ctx.strokeStyle = "#ffd166";
+    ctx.save();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = "#08adff";
+    ctx.shadowBlur = 18;
+    ctx.shadowColor = "rgba(8, 173, 255, 0.8)";
     if (isSquareReticle) {
       const side = radius * 1.8;
       const half = side * 0.5;
       ctx.strokeRect(x - half, y - half, side, side);
+      ctx.restore();
       return;
     }
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, Math.PI * 2);
     ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawLandmarkDot(x, y, radius, fill, glow, alpha = 1) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = fill;
+    ctx.shadowBlur = radius * 2.2;
+    ctx.shadowColor = glow;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 
   function drawDebug(hands, interaction, primaryHand = null) {
     ctx.clearRect(0, 0, overlayEl.width, overlayEl.height);
     if (!hands?.length) return;
 
-    const colors = ["#93ffd8", "#9ec3ff"];
+    const colors = ["#12d9ff", "#2f7dff"];
 
     ctx.globalCompositeOperation = "source-over";
 
     hands.forEach((hand, i) => {
       const color = colors[i % colors.length];
       const isPrimary = hand === primaryHand;
-      ctx.lineWidth = isPrimary ? 2.1 : 1.4;
-      ctx.globalAlpha = isPrimary ? 0.62 : 0.38;
-      ctx.shadowBlur = isPrimary ? 5 : 1;
+      ctx.lineWidth = isPrimary ? 3.4 : 2.1;
+      ctx.globalAlpha = isPrimary ? 0.9 : 0.55;
+      ctx.shadowBlur = isPrimary ? 14 : 5;
       ctx.shadowColor = color;
       ctx.setLineDash([]);
 
@@ -291,11 +353,39 @@ export function bootstrapApp() {
       for (const [a, b] of HAND_CONNECTIONS) {
         const p1 = hand[a];
         const p2 = hand[b];
+
+        if (isPrimary) {
+          ctx.save();
+          ctx.lineWidth = 7;
+          ctx.globalAlpha = 0.16;
+          ctx.strokeStyle = color;
+          ctx.shadowBlur = 0;
+          ctx.beginPath();
+          ctx.moveTo((1 - p1.x) * overlayEl.width, p1.y * overlayEl.height);
+          ctx.lineTo((1 - p2.x) * overlayEl.width, p2.y * overlayEl.height);
+          ctx.stroke();
+          ctx.restore();
+        }
+
         ctx.beginPath();
         ctx.moveTo((1 - p1.x) * overlayEl.width, p1.y * overlayEl.height);
         ctx.lineTo((1 - p2.x) * overlayEl.width, p2.y * overlayEl.height);
         ctx.stroke();
       }
+
+      hand.forEach((point, pointIndex) => {
+        const x = (1 - point.x) * overlayEl.width;
+        const y = point.y * overlayEl.height;
+        const isFingertip = [4, 8, 12, 16, 20].includes(pointIndex);
+        const isAnchor = pointIndex === 0 || pointIndex === 5 || pointIndex === 9 || pointIndex === 17;
+        const radius = isPrimary
+          ? (isFingertip ? 5.2 : isAnchor ? 4.2 : 2.8)
+          : (isFingertip ? 3.2 : 2.1);
+        const fill = isPrimary ? "#e9fbff" : "#9fdcff";
+        const glow = isPrimary ? color : "rgba(47, 125, 255, 0.4)";
+        const alpha = isPrimary ? (isFingertip ? 1 : 0.88) : 0.62;
+        drawLandmarkDot(x, y, radius, fill, glow, alpha);
+      });
 
       if (isPrimary && SHOW_HAND_MARKERS) {
         const contact = midpointLandmark(hand[4], hand[8]) || hand[8];
@@ -305,6 +395,8 @@ export function bootstrapApp() {
         ctx.globalAlpha = 0.9;
         ctx.setLineDash([]);
         drawPlacementReticle(contactX, contactY, pulse);
+
+        drawLandmarkDot(contactX, contactY, 6.2, "#ffffff", "rgba(8, 173, 255, 0.9)", 0.96);
       }
     });
 
@@ -359,6 +451,7 @@ export function bootstrapApp() {
       removeMesh(old);
       if (activeMesh === old) setActiveMesh(null);
     }
+    renderObjectList();
   }
 
   function undo() {
@@ -367,6 +460,7 @@ export function bootstrapApp() {
     removeMesh(mesh);
     if (activeMesh === mesh) setActiveMesh(null);
     setStatus(`Undid one shape. Remaining ${placedMeshes.length}`, "ok");
+    renderObjectList();
     refreshDebug();
   }
 
@@ -379,6 +473,7 @@ export function bootstrapApp() {
     if (target === activeMesh) setActiveMesh(null);
     removeMesh(target);
     setStatus("Deleted nearest object to palm", "ok");
+    renderObjectList();
     return true;
   }
 
@@ -386,6 +481,7 @@ export function bootstrapApp() {
     while (placedMeshes.length) removeMesh(placedMeshes.pop());
     setActiveMesh(null);
     setStatus("Cleared scene", "idle");
+    renderObjectList();
     refreshDebug();
   }
 
@@ -415,7 +511,7 @@ export function bootstrapApp() {
   function loadScene(data) {
     clearAll();
     data.forEach((item) => {
-      const mesh = world.buildMesh(item.shape || "cube", Number(item.baseSize || 1), item.color || "#39d0b8");
+      const mesh = world.buildMesh(item.shape || "cube", Number(item.baseSize || 1), item.color || "#00a6ff");
       mesh.position.fromArray(item.position || [0, 0.5, 0]);
       mesh.rotation.y = Number(item.rotationY || 0);
       if (Array.isArray(item.scale)) mesh.scale.fromArray(item.scale);
@@ -425,6 +521,7 @@ export function bootstrapApp() {
       placedMeshes.push(mesh);
     });
     setStatus(`Loaded ${placedMeshes.length} shapes`, "ok");
+    renderObjectList();
     refreshDebug();
   }
 
@@ -523,6 +620,7 @@ export function bootstrapApp() {
           setActiveMesh(mesh);
           placedMeshes.push(mesh);
           enforceMeshBudget();
+          renderObjectList();
           setStatus(`Placed ${shapeTypeEl.value}`, "ok");
           lastSpawnAt = now;
           lastOperationAt = now;
@@ -634,6 +732,12 @@ export function bootstrapApp() {
     setIntent("stopped", "idle");
   }
 
+  function bindValueEvents(el, handler) {
+    if (!el) return;
+    el.addEventListener("input", handler);
+    el.addEventListener("change", handler);
+  }
+
   document.addEventListener("visibilitychange", () => {
     if (document.hidden && running) {
       stop();
@@ -642,7 +746,7 @@ export function bootstrapApp() {
     }
   });
 
-  smoothingInputEl.addEventListener("input", () => {
+  bindValueEvents(smoothingInputEl, () => {
     const alpha = Number(smoothingInputEl.value);
     appState.calibration.smoothingAlpha = alpha;
     pipeline.setAlpha(alpha);
@@ -663,9 +767,9 @@ export function bootstrapApp() {
 
   transformSnapModeEl.addEventListener("change", refreshDebug);
   transformLockModeEl.addEventListener("change", refreshDebug);
-  rotationStepInputEl.addEventListener("input", refreshDebug);
+  bindValueEvents(rotationStepInputEl, refreshDebug);
   snapToggleEl.addEventListener("change", refreshDebug);
-  gridStepInputEl.addEventListener("input", refreshDebug);
+  bindValueEvents(gridStepInputEl, refreshDebug);
 
   calibrateBtn.addEventListener("click", () => {
     const reference = appState.interaction.wristToIndex || appState.calibration.baselineDistance;
@@ -710,6 +814,7 @@ export function bootstrapApp() {
   window.addEventListener("beforeunload", stop);
 
   refreshDebug();
+  renderObjectList();
   setStatus("Ready. Start camera to begin.", "idle");
   setIntent("ready", "idle");
 }
