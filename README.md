@@ -43,6 +43,31 @@ Synthetic stress check:
 python3 tools/stress_simulator.py
 ```
 
+## TensorFlow gesture signal model
+Train a 6-class gesture classifier for project signals:
+- pinch_place (thumb+index) → place object
+- fist_delete → delete object
+- open_palm_cycle → change shape
+- peace_draw → draw lines
+- point_rotate → rotate object
+- neutral_cancel (flat open palm still) → neutral/cancel
+
+Train:
+```bash
+python3 tools/train_gesture_model_tf.py --samples-per-class 2200 --epochs 45
+```
+
+Stress test:
+```bash
+python3 tools/stress_test_gesture_model_tf.py --per-class 1200
+```
+
+Artifacts are saved in `models/tf_gesture/`:
+- `gesture_signal_model.keras`
+- `gesture_labels.json`
+- `gesture_train_metrics.json`
+- `gesture_stress_report.json`
+
 ## Run
 Serve this folder with any static server and open `index.html`.
 
