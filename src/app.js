@@ -14,19 +14,14 @@ const HAND_CONNECTIONS = [
 const SHOW_HAND_MARKERS = false;
 const PALM_CENTER_INDEXES = [0, 5, 9, 13, 17];
 const SPAWN_COOLDOWN_MS = 220;
+const FIST_DELETE_COOLDOWN_MS = 420;
+const FIST_HOLD_FRAMES = 5;
+const OPERATION_COOLDOWN_MS = 2500;
 const PLACEMENT_PULSE_BASE = 8;
 const PLACEMENT_PULSE_GAIN = 7;
 const PLACEMENT_PULSE_TRIGGER_RADIUS = 12.2;
-const SIGNAL_STABLE_FRAMES = 2;
-const NEUTRAL_STILL_FRAMES = 10;
-
 const SIGNALS = {
-  PINCH_PLACE: "pinch_place",
   FIST_DELETE: "fist_delete",
-  OPEN_PALM_CYCLE: "open_palm_cycle",
-  PEACE_DRAW: "peace_draw",
-  POINT_ROTATE: "point_rotate",
-  NEUTRAL_CANCEL: "neutral_cancel",
 };
 
 function pinchDistance(hand) {
@@ -85,19 +80,13 @@ export function bootstrapApp() {
   let smoothedPalm = null;
   let smoothedPinch = null;
   let lastSpawnAt = 0;
+  let lastFistDeleteAt = 0;
+  let lastOperationAt = 0;
+  let fistFrames = 0;
   let prevTwoHandAngle = null;
   let transformLocked = false;
   let activeMesh = null;
   const placedMeshes = [];
-  let currentSignal = null;
-  let signalCandidate = null;
-  let signalStableCount = 0;
-  let prevSignal = null;
-  let neutralStillCounter = 0;
-  let prevPalmCenter = null;
-  let drawingLine = null;
-  let drawingPoints = [];
-  let rotatePrevX = null;
   const MAX_MESHES = 220;
   const calibrationPresets = {
     custom: null,
@@ -203,98 +192,50 @@ export function bootstrapApp() {
     return best;
   }
 
-  function fingerExtended(hand, mcp, pip, tip, openThreshold = 1.15) {
-    if (!hand) return false;
-    const wrist = hand[0];
-    const m = hand[mcp];
-    const p = hand[pip];
-    const t = hand[tip];
-    if (!wrist || !m || !p || !t) return false;
+  function lmkDist(a, b) {
+    if (!a || !b) return Infinity;
+    return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+  }
 
-    const tipDist = Math.hypot(t.x - wrist.x, t.y - wrist.y, t.z - wrist.z);
-    const pipDist = Math.hypot(p.x - wrist.x, p.y - wrist.y, p.z - wrist.z);
-    const mcpDist = Math.hypot(m.x - wrist.x, m.y - wrist.y, m.z - wrist.z);
-    return tipDist > Math.max(pipDist, mcpDist) * openThreshold;
+  function palmScale(hand) {
+    if (!hand) return 1;
+    // stable hand size reference
+    return Math.max(1e-4, lmkDist(hand[0], hand[9]));
+  }
+
+  function isFistPose(hand) {
+    if (!hand) return false;
+    const scale = palmScale(hand);
+    const wrist = hand[0];
+
+    const tips = [8, 12, 16, 20];
+    const pips = [6, 10, 14, 18];
+    const mcps = [5, 9, 13, 17];
+
+    // 1) Fingertips should sit close to palm center/wrist for a fist
+    const tipToWrist = tips.map((i) => lmkDist(hand[i], wrist) / scale);
+    const avgTipToWrist = tipToWrist.reduce((a, b) => a + b, 0) / tipToWrist.length;
+
+    // 2) Fingers should be curled: tip not much farther than pip/mcp from wrist
+    let curledCount = 0;
+    for (let i = 0; i < tips.length; i += 1) {
+      const td = lmkDist(hand[tips[i]], wrist);
+      const pd = lmkDist(hand[pips[i]], wrist);
+      const md = lmkDist(hand[mcps[i]], wrist);
+      if (td <= Math.max(pd, md) * 1.08) curledCount += 1;
+    }
+
+    // 3) Thumb should also be tucked (tip close to palm)
+    const thumbTucked = (lmkDist(hand[4], wrist) / scale) < 1.45;
+
+    // stricter: require tighter closure and almost all fingers curled
+    return avgTipToWrist < 1.30 && curledCount >= 4 && thumbTucked;
   }
 
   function classifySignal(primary, interaction) {
     if (!primary || !interaction?.handsDetected) return null;
-    if (interaction.pinch) return SIGNALS.PINCH_PLACE;
-
-    const thumb = fingerExtended(primary, 1, 2, 4, 1.05);
-    const index = fingerExtended(primary, 5, 6, 8);
-    const middle = fingerExtended(primary, 9, 10, 12);
-    const ring = fingerExtended(primary, 13, 14, 16);
-    const pinky = fingerExtended(primary, 17, 18, 20);
-
-    const openCount = [thumb, index, middle, ring, pinky].filter(Boolean).length;
-    const isFist = openCount <= 1 && !index;
-    if (isFist) return SIGNALS.FIST_DELETE;
-
-    const isPeace = index && middle && !ring && !pinky;
-    if (isPeace) return SIGNALS.PEACE_DRAW;
-
-    const isPoint = index && !middle && !ring && !pinky;
-    if (isPoint) return SIGNALS.POINT_ROTATE;
-
-    if (openCount >= 4) {
-      const palm = palmCenterLandmark(primary);
-      const motion = palm && prevPalmCenter
-        ? Math.hypot(palm.x - prevPalmCenter.x, palm.y - prevPalmCenter.y, palm.z - prevPalmCenter.z)
-        : Infinity;
-      if (motion < 0.015) neutralStillCounter += 1;
-      else neutralStillCounter = 0;
-      if (neutralStillCounter >= NEUTRAL_STILL_FRAMES) return SIGNALS.NEUTRAL_CANCEL;
-      return SIGNALS.OPEN_PALM_CYCLE;
-    }
-
-    neutralStillCounter = 0;
+    if (isFistPose(primary)) return SIGNALS.FIST_DELETE;
     return null;
-  }
-
-  function updateStableSignal(rawSignal) {
-    if (rawSignal === signalCandidate && rawSignal) signalStableCount += 1;
-    else {
-      signalCandidate = rawSignal;
-      signalStableCount = rawSignal ? 1 : 0;
-    }
-    if (signalStableCount >= SIGNAL_STABLE_FRAMES) currentSignal = signalCandidate;
-    return currentSignal;
-  }
-
-  function cycleShapeType() {
-    const options = Array.from(shapeTypeEl.options).map((o) => o.value);
-    const curr = options.indexOf(shapeTypeEl.value);
-    if (curr < 0 || options.length === 0) return;
-    shapeTypeEl.value = options[(curr + 1) % options.length];
-    setStatus(`Shape changed to ${shapeTypeEl.value}`, "ok");
-  }
-
-  function startLine(point) {
-    if (!point) return;
-    const geometry = new THREE.BufferGeometry().setFromPoints([point.clone(), point.clone()]);
-    const material = new THREE.LineBasicMaterial({ color: new THREE.Color(colorInputEl.value) });
-    drawingLine = new THREE.Line(geometry, material);
-    drawingLine.userData.shape = "line";
-    drawingLine.userData.baseSize = Number(sizeInputEl.value);
-    drawingPoints = [point.clone(), point.clone()];
-    world.scene.add(drawingLine);
-    placedMeshes.push(drawingLine);
-    enforceMeshBudget();
-  }
-
-  function extendLine(point) {
-    if (!drawingLine || !point) return;
-    const prev = drawingPoints[drawingPoints.length - 1];
-    if (prev && prev.distanceTo(point) < 0.05) return;
-    drawingPoints.push(point.clone());
-    drawingLine.geometry.setFromPoints(drawingPoints);
-    drawingLine.geometry.computeBoundingSphere();
-  }
-
-  function endLine() {
-    drawingLine = null;
-    drawingPoints = [];
   }
 
   function setStatus(msg, state = "ok") {
@@ -429,6 +370,18 @@ export function bootstrapApp() {
     refreshDebug();
   }
 
+  function deleteNearestToPalm(palmHit) {
+    if (!palmHit) return false;
+    const target = pickNearestMesh(palmHit, Infinity);
+    if (!target) return false;
+    const idx = placedMeshes.indexOf(target);
+    if (idx >= 0) placedMeshes.splice(idx, 1);
+    if (target === activeMesh) setActiveMesh(null);
+    removeMesh(target);
+    setStatus("Deleted nearest object to palm", "ok");
+    return true;
+  }
+
   function clearAll() {
     while (placedMeshes.length) removeMesh(placedMeshes.pop());
     setActiveMesh(null);
@@ -514,18 +467,23 @@ export function bootstrapApp() {
       }
 
       const interaction = pipeline.update(primary, secondary);
-      const palmCenter = primary ? palmCenterLandmark(primary) : null;
-      if (palmCenter) prevPalmCenter = palmCenter;
       const rawSignal = classifySignal(primary, interaction);
-      const signal = updateStableSignal(rawSignal);
+      if (rawSignal === SIGNALS.FIST_DELETE) fistFrames += 1;
+      else fistFrames = 0;
+      const signal = fistFrames >= FIST_HOLD_FRAMES ? SIGNALS.FIST_DELETE : null;
+      const palmCenter = primary ? palmCenterLandmark(primary) : null;
       drawDebug(hands, interaction, primary);
       appState.interaction = interaction;
       appState.interaction.signal = signal;
 
       if (!interaction.handsDetected) {
         setIntent("waiting for hands", "idle");
-      } else if (signal) {
-        setIntent(signal.replaceAll("_", " "), "ok");
+      } else if (interaction.pinch && gestureModeEl.value === "spawn") {
+        setIntent("placing shape", "ok");
+      } else if (interaction.pinch && gestureModeEl.value === "transform") {
+        setIntent(transformLocked ? "transform lock active" : "acquiring transform lock", "ok");
+      } else if (signal === SIGNALS.FIST_DELETE) {
+        setIntent("fist delete", "ok");
       } else {
         setIntent(gestureModeEl.value === "transform" ? "hovering for selection" : "ready to place", "idle");
       }
@@ -544,15 +502,16 @@ export function bootstrapApp() {
 
         // Palm proxy intentionally disabled to keep the world view clean.
 
-        const pinchActive = signal === SIGNALS.PINCH_PLACE;
+        const pinchActive = interaction.pinch && signal !== SIGNALS.FIST_DELETE;
         const pinchStart = pinchActive && !prevPinch;
         const pulseRadius = pinchPulseRadius(interaction.pinchStrength || 0);
         const placementPulseActive = pinchActive && pulseRadius >= PLACEMENT_PULSE_TRIGGER_RADIUS;
         const placementPulseTrigger = placementPulseActive && !prevPlacementPulseActive;
         const pinchHitForSpawn = pinchHitRaw || pinchHit;
         const canSpawn = now - lastSpawnAt >= SPAWN_COOLDOWN_MS;
+        const canOperate = now - lastOperationAt >= OPERATION_COOLDOWN_MS;
 
-        const shouldSpawn = canSpawn && pinchHitForSpawn && (pinchStart || placementPulseTrigger);
+        const shouldSpawn = canOperate && canSpawn && pinchHitForSpawn && (pinchStart || placementPulseTrigger);
         if (shouldSpawn) {
           const mesh = world.buildMesh(shapeTypeEl.value, Number(sizeInputEl.value), colorInputEl.value);
           mesh.position.x = shouldSnapPosition() ? snapValue(pinchHitForSpawn.x) : pinchHitForSpawn.x;
@@ -566,50 +525,17 @@ export function bootstrapApp() {
           enforceMeshBudget();
           setStatus(`Placed ${shapeTypeEl.value}`, "ok");
           lastSpawnAt = now;
+          lastOperationAt = now;
         }
 
-        const signalStart = signal && signal !== prevSignal;
-        if (signalStart && signal === SIGNALS.OPEN_PALM_CYCLE) {
-          cycleShapeType();
-        }
-
-        if (signalStart && signal === SIGNALS.FIST_DELETE && palmHit) {
-          const target = pickNearestMesh(palmHit);
-          if (target) {
-            const idx = placedMeshes.indexOf(target);
-            if (idx >= 0) placedMeshes.splice(idx, 1);
-            if (target === activeMesh) setActiveMesh(null);
-            removeMesh(target);
-            setStatus("Deleted nearest object", "ok");
-          }
-        }
-
-        if (signal === SIGNALS.PEACE_DRAW) {
-          if (!drawingLine && pinchHit) startLine(pinchHit);
-          if (pinchHit) extendLine(pinchHit);
-        } else if (prevSignal === SIGNALS.PEACE_DRAW) {
-          endLine();
-        }
-
-        if (signal === SIGNALS.POINT_ROTATE) {
-          const target = activeMesh || (palmHit ? pickNearestMesh(palmHit) : null);
-          if (target && primary?.[8]) {
-            if (rotatePrevX != null) {
-              const dx = primary[8].x - rotatePrevX;
-              target.rotation.y = snapRotation(target.rotation.y - dx * 7.0);
-              setActiveMesh(target);
-            }
-            rotatePrevX = primary[8].x;
-          }
-        } else {
-          rotatePrevX = null;
-        }
-
-        if (signalStart && signal === SIGNALS.NEUTRAL_CANCEL) {
-          transformLocked = false;
-          setActiveMesh(null);
-          endLine();
-          setStatus("Neutral state: cancelled current action", "idle");
+        const canDeleteWithFist =
+          signal === SIGNALS.FIST_DELETE &&
+          palmHit &&
+          now - lastOperationAt >= OPERATION_COOLDOWN_MS &&
+          now - lastFistDeleteAt >= FIST_DELETE_COOLDOWN_MS;
+        if (canDeleteWithFist && deleteNearestToPalm(palmHit)) {
+          lastFistDeleteAt = now;
+          lastOperationAt = now;
         }
 
         if (pinchStart && palmHit && gestureModeEl.value === "transform") {
@@ -666,20 +592,13 @@ export function bootstrapApp() {
 
         prevPlacementPulseActive = placementPulseActive;
         prevPinch = pinchActive;
-        prevSignal = signal;
       }
 
       refreshDebug();
       if (!primary) {
         prevPinch = false;
         prevPlacementPulseActive = false;
-        prevSignal = null;
-        currentSignal = null;
-        signalCandidate = null;
-        signalStableCount = 0;
-        neutralStillCounter = 0;
-        rotatePrevX = null;
-        endLine();
+        fistFrames = 0;
         smoothedPalm = null;
         smoothedPinch = null;
       }
