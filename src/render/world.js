@@ -2,12 +2,17 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
 export function createWorld(container) {
+  const DEFAULT_CAMERA_POS = new THREE.Vector3(16, 10.5, -16);
+  const DEFAULT_TARGET = new THREE.Vector3(0, 0, 0);
+
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x020815);
-  scene.fog = new THREE.FogExp2(0x020815, 0.014);
+  // Keep distant grid readable while zooming far out.
+  scene.fog = null;
 
-  const camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.1, 100);
-  camera.position.set(10.5, 9.5, 10.5);
+  const camera = new THREE.PerspectiveCamera(34, 16 / 9, 0.1, 1000000);
+  // Start at bottom-right quadrant view.
+  camera.position.copy(DEFAULT_CAMERA_POS);
   camera.lookAt(0, 0, 0);
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -19,15 +24,40 @@ export function createWorld(container) {
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.enableRotate = true;
-  controls.enablePan = false;
+  controls.enablePan = true;
+  controls.screenSpacePanning = true;
+  controls.panSpeed = 0.9;
   controls.rotateSpeed = 0.8;
-  controls.minDistance = 7;
-  controls.maxDistance = 26;
-  controls.minPolarAngle = 0.55;
-  controls.maxPolarAngle = 1.35;
-  controls.zoomSpeed = 0.9;
-  controls.target.set(0, 0, 0);
+  controls.minDistance = 2;
+  // effectively unbounded zoom-out
+  controls.maxDistance = 1e12;
+  controls.minPolarAngle = 0.08;
+  controls.maxPolarAngle = Math.PI - 0.08;
+  controls.zoomSpeed = 1.0;
+  controls.target.copy(DEFAULT_TARGET);
+  controls.maxTargetRadius = 1e12;
   controls.update();
+
+  function setNavigationMode(mode = "blender") {
+    // OrbitControls with Blender-style mouse bindings.
+    if (mode === "blender") {
+      controls.mouseButtons = {
+        LEFT: THREE.MOUSE.PAN,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.ROTATE,
+      };
+      return;
+    }
+
+    controls.mouseButtons = {
+      LEFT: THREE.MOUSE.ROTATE,
+      MIDDLE: THREE.MOUSE.DOLLY,
+      RIGHT: THREE.MOUSE.PAN,
+    };
+  }
+
+  // default to blender-like navigation
+  setNavigationMode("blender");
 
   scene.add(new THREE.HemisphereLight(0xf1ffff, 0x071320, 1.2));
 
@@ -61,6 +91,25 @@ export function createWorld(container) {
   });
   scene.add(majorGrid);
 
+  // Far-distance grid layers so zooming out reveals more lines instead of fading out.
+  const farGridA = new THREE.GridHelper(2400, 240, 0x5a9fd6, 0x376391);
+  farGridA.position.y = 0.0005;
+  const farGridAMaterials = Array.isArray(farGridA.material) ? farGridA.material : [farGridA.material];
+  farGridAMaterials.forEach((material, index) => {
+    material.transparent = true;
+    material.opacity = index === 0 ? 0.42 : 0.24;
+  });
+  scene.add(farGridA);
+
+  const farGridB = new THREE.GridHelper(12000, 480, 0x4f88bf, 0x2a4c74);
+  farGridB.position.y = 0.0002;
+  const farGridBMaterials = Array.isArray(farGridB.material) ? farGridB.material : [farGridB.material];
+  farGridBMaterials.forEach((material, index) => {
+    material.transparent = true;
+    material.opacity = index === 0 ? 0.36 : 0.2;
+  });
+  scene.add(farGridB);
+
   const stagePlane = new THREE.Mesh(
     new THREE.PlaneGeometry(1200, 1200),
     new THREE.MeshBasicMaterial({
@@ -72,20 +121,9 @@ export function createWorld(container) {
   );
   stagePlane.rotation.x = -Math.PI / 2;
   stagePlane.position.y = -0.006;
+  stagePlane.renderOrder = -1;
+  stagePlane.material.depthWrite = false;
   scene.add(stagePlane);
-
-  const centerGlow = new THREE.Mesh(
-    new THREE.CircleGeometry(12, 72),
-    new THREE.MeshBasicMaterial({
-      color: 0x7cf7e4,
-      transparent: true,
-      opacity: 0.06,
-      side: THREE.DoubleSide,
-    })
-  );
-  centerGlow.rotation.x = -Math.PI / 2;
-  centerGlow.position.y = -0.001;
-  scene.add(centerGlow);
 
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
@@ -172,7 +210,24 @@ export function createWorld(container) {
     return group;
   }
 
+  function resetView() {
+    camera.position.copy(DEFAULT_CAMERA_POS);
+    controls.target.copy(DEFAULT_TARGET);
+    camera.lookAt(DEFAULT_TARGET);
+    controls.update();
+  }
+
   function animate() {
+    const dist = camera.position.distanceTo(controls.target);
+    // Progressive grid density visibility by zoom distance.
+    fineGrid.visible = dist < 280;
+    majorGrid.visible = dist < 1400;
+    farGridA.visible = dist > 120;
+    farGridB.visible = dist > 700;
+
+    // When camera goes below world, hide the stage plate so object components remain visible.
+    stagePlane.visible = camera.position.y >= stagePlane.position.y;
+
     controls.update();
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
@@ -182,5 +237,16 @@ export function createWorld(container) {
   resize();
   animate();
 
-  return { scene, camera, renderer, projectToGround, buildMesh, createSelectionRing, createRotationGuide, createPalmProxy };
+  return {
+    scene,
+    camera,
+    renderer,
+    projectToGround,
+    buildMesh,
+    createSelectionRing,
+    createRotationGuide,
+    createPalmProxy,
+    setNavigationMode,
+    resetView,
+  };
 }

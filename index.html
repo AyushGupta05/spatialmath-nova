@@ -48,6 +48,9 @@
             <button id="loadSceneBtn" class="tool-btn is-load" data-tooltip="Load">
               <span class="tool-label">Load</span>
             </button>
+            <button id="resetViewBtn" class="tool-btn is-reset" data-tooltip="Reset View">
+              <span class="tool-label">Reset View</span>
+            </button>
             <input id="loadSceneInput" type="file" accept="application/json" hidden />
           </div>
 
@@ -118,6 +121,14 @@
                 <select id="transformLockMode">
                   <option value="hold">Hold</option>
                   <option value="sticky">Sticky</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Navigation</span>
+                <select id="navigationMode">
+                  <option value="blender" selected>Blender-style</option>
+                  <option value="orbit">Orbit (standard)</option>
                 </select>
               </label>
 
@@ -210,6 +221,7 @@
 
         <section class="graph-panel">
           <div class="stage-wrap">
+            <button id="resetViewSceneBtn" class="scene-reset-btn" type="button">Reset to Default</button>
             <div class="stage" id="worldMount"></div>
             <canvas id="overlay"></canvas>
             <video id="webcam" autoplay playsinline muted></video>

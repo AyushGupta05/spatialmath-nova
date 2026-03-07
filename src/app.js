@@ -12,10 +12,11 @@ const HAND_CONNECTIONS = [
   [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]
 ];
 const SHOW_HAND_MARKERS = true;
+const HAND_OVERLAY_SCALE = 0.88;
 const PALM_CENTER_INDEXES = [0, 5, 9, 13, 17];
 const SPAWN_COOLDOWN_MS = 220;
 const FIST_DELETE_COOLDOWN_MS = 420;
-const FIST_HOLD_FRAMES = 5;
+const FIST_HOLD_MS = 180;
 const OPERATION_COOLDOWN_MS = 2500;
 const PLACEMENT_PULSE_BASE = 8;
 const PLACEMENT_PULSE_GAIN = 7;
@@ -44,6 +45,8 @@ export function bootstrapApp() {
   const clearBtn = document.querySelector("#clearBtn");
   const saveSceneBtn = document.querySelector("#saveSceneBtn");
   const loadSceneBtn = document.querySelector("#loadSceneBtn");
+  const resetViewBtn = document.querySelector("#resetViewBtn");
+  const resetViewSceneBtn = document.querySelector("#resetViewSceneBtn");
   const loadSceneInput = document.querySelector("#loadSceneInput");
   const shapeTypeEl = document.querySelector("#shapeType");
   const gestureModeEl = document.querySelector("#gestureMode");
@@ -57,6 +60,7 @@ export function bootstrapApp() {
   const gridStepInputEl = document.querySelector("#gridStepInput");
   const transformSnapModeEl = document.querySelector("#transformSnapMode");
   const transformLockModeEl = document.querySelector("#transformLockMode");
+  const navigationModeEl = document.querySelector("#navigationMode");
   const rotationStepInputEl = document.querySelector("#rotationStepInput");
   const debugStateEl = document.querySelector("#debugState");
   const intentBadgeEl = document.querySelector("#intentBadge");
@@ -66,6 +70,9 @@ export function bootstrapApp() {
 
   const ctx = overlayEl.getContext("2d");
   const world = createWorld(worldMount);
+  if (navigationModeEl && typeof world.setNavigationMode === "function") {
+    world.setNavigationMode(navigationModeEl.value || "blender");
+  }
 
   appState.calibration = loadCalibration();
   const pipeline = new InteractionPipeline({ alpha: appState.calibration.smoothingAlpha });
@@ -84,7 +91,7 @@ export function bootstrapApp() {
   let lastSpawnAt = 0;
   let lastFistDeleteAt = 0;
   let lastOperationAt = 0;
-  let fistFrames = 0;
+  let fistHoldStartAt = null;
   let prevTwoHandAngle = null;
   let transformLocked = false;
   let activeMesh = null;
@@ -228,20 +235,47 @@ export function bootstrapApp() {
     const tipToWrist = tips.map((i) => lmkDist(hand[i], wrist) / scale);
     const avgTipToWrist = tipToWrist.reduce((a, b) => a + b, 0) / tipToWrist.length;
 
-    // 2) Fingers should be curled: tip not much farther than pip/mcp from wrist
+    // 2) Fingers should be tightly curled: tip not farther than pip/mcp from wrist
     let curledCount = 0;
     for (let i = 0; i < tips.length; i += 1) {
       const td = lmkDist(hand[tips[i]], wrist);
       const pd = lmkDist(hand[pips[i]], wrist);
       const md = lmkDist(hand[mcps[i]], wrist);
-      if (td <= Math.max(pd, md) * 1.08) curledCount += 1;
+      if (td <= Math.max(pd, md) * 0.98) curledCount += 1;
+    }
+
+    // 2b) Fingertips must be drawn inward toward palm center (not semi-open)
+    const palmCenter = {
+      x: (hand[0].x + hand[5].x + hand[9].x + hand[13].x + hand[17].x) / 5,
+      y: (hand[0].y + hand[5].y + hand[9].y + hand[13].y + hand[17].y) / 5,
+      z: (hand[0].z + hand[5].z + hand[9].z + hand[13].z + hand[17].z) / 5,
+    };
+    const avgTipToPalm = tips
+      .map((i) => lmkDist(hand[i], palmCenter) / scale)
+      .reduce((a, b) => a + b, 0) / tips.length;
+
+    // 2c) Knuckle-fist silhouette: each fingertip should be close to/behind its MCP in extension direction.
+    // In MediaPipe image coords, more open fingers usually have noticeably smaller y at tips.
+    // For fist, tip y tends to be near or greater than MCP y (folded back toward palm).
+    let foldedSilhouetteCount = 0;
+    for (let i = 0; i < tips.length; i += 1) {
+      const tip = hand[tips[i]];
+      const mcp = hand[mcps[i]];
+      if ((tip.y - mcp.y) > -0.02) foldedSilhouetteCount += 1;
     }
 
     // 3) Thumb should also be tucked (tip close to palm)
-    const thumbTucked = (lmkDist(hand[4], wrist) / scale) < 1.45;
+    const thumbToPalm = lmkDist(hand[4], palmCenter) / scale;
+    const thumbTucked = (lmkDist(hand[4], wrist) / scale) < 1.18 && thumbToPalm < 0.92;
 
-    // stricter: require tighter closure and almost all fingers curled
-    return avgTipToWrist < 1.30 && curledCount >= 4 && thumbTucked;
+    // strict closed-fist gate
+    return (
+      avgTipToWrist < 1.08 &&
+      avgTipToPalm < 0.88 &&
+      curledCount >= 4 &&
+      foldedSilhouetteCount >= 3 &&
+      thumbTucked
+    );
   }
 
   function classifySignal(primary, interaction) {
@@ -297,33 +331,12 @@ export function bootstrapApp() {
   }
 
   function drawPlacementReticle(x, y, radius) {
-    const isSquareReticle = shapeTypeEl.value === "cube";
     ctx.save();
-    ctx.lineWidth = 2.2;
-    ctx.strokeStyle = "#6fb8ff";
-    ctx.shadowBlur = 12;
-    ctx.shadowColor = "rgba(111, 184, 255, 0.9)";
-    if (isSquareReticle) {
-      const side = radius * 1.8;
-      const half = side * 0.5;
-      ctx.strokeRect(x - half, y - half, side, side);
-    } else {
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    ctx.lineWidth = 1.1;
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.92)";
-    if (isSquareReticle) {
-      const side = radius * 1.42;
-      const half = side * 0.5;
-      ctx.strokeRect(x - half, y - half, side, side);
-    } else {
-      ctx.beginPath();
-      ctx.arc(x, y, Math.max(5, radius - 2.4), 0, Math.PI * 2);
-      ctx.stroke();
-    }
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = "rgba(120, 205, 235, 0.55)";
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(5, radius * 0.36), 0, Math.PI * 2);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -343,72 +356,53 @@ export function bootstrapApp() {
     ctx.clearRect(0, 0, overlayEl.width, overlayEl.height);
     if (!hands?.length) return;
 
-    const colors = ["#b9f6ff", "#8bc8ff"];
+    // Minimal futuristic overlay with subtle contrast.
+    const hand = primaryHand || hands[0];
+    if (!hand) return;
 
-    ctx.globalCompositeOperation = "source-over";
+    const palm = palmCenterLandmark(hand) || hand[0] || { x: 0.5, y: 0.5, z: 0 };
+    const palmScreenX = (1 - palm.x) * overlayEl.width;
+    const palmScreenY = palm.y * overlayEl.height;
+    const toOverlay = (p) => {
+      const sx = (1 - p.x) * overlayEl.width;
+      const sy = p.y * overlayEl.height;
+      return {
+        x: palmScreenX + (sx - palmScreenX) * HAND_OVERLAY_SCALE,
+        y: palmScreenY + (sy - palmScreenY) * HAND_OVERLAY_SCALE,
+      };
+    };
 
-    hands.forEach((hand, i) => {
-      const color = colors[i % colors.length];
-      const isPrimary = hand === primaryHand;
-      ctx.lineWidth = isPrimary ? 3.2 : 2.1;
-      ctx.globalAlpha = isPrimary ? 0.96 : 0.7;
-      ctx.shadowBlur = isPrimary ? 10 : 5;
-      ctx.shadowColor = color;
-      ctx.setLineDash([]);
-      ctx.strokeStyle = color;
+    ctx.save();
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = "rgba(125, 210, 235, 0.45)";
+    ctx.shadowBlur = 4;
+    ctx.shadowColor = "rgba(90, 190, 220, 0.35)";
+    for (const [a, b] of HAND_CONNECTIONS) {
+      const p1 = toOverlay(hand[a]);
+      const p2 = toOverlay(hand[b]);
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+    }
 
-      for (const [a, b] of HAND_CONNECTIONS) {
-        const p1 = hand[a];
-        const p2 = hand[b];
-        const x1 = (1 - p1.x) * overlayEl.width;
-        const y1 = p1.y * overlayEl.height;
-        const x2 = (1 - p2.x) * overlayEl.width;
-        const y2 = p2.y * overlayEl.height;
+    const fingertipIdx = [4, 8, 12, 16, 20];
+    for (const idx of fingertipIdx) {
+      const p = toOverlay(hand[idx]);
+      ctx.fillStyle = "rgba(90, 190, 220, 0.5)";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
 
-        ctx.save();
-        ctx.lineWidth = isPrimary ? 7.2 : 4.8;
-        ctx.globalAlpha = isPrimary ? 0.18 : 0.12;
-        ctx.strokeStyle = color;
-        ctx.shadowBlur = isPrimary ? 16 : 8;
-        ctx.shadowColor = color;
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
-        ctx.stroke();
-        ctx.restore();
-
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
-        ctx.stroke();
-
-      }
-
-      hand.forEach((point, pointIndex) => {
-        const x = (1 - point.x) * overlayEl.width;
-        const y = point.y * overlayEl.height;
-        const isFingertip = [4, 8, 12, 16, 20].includes(pointIndex);
-        const radius = isPrimary
-          ? (isFingertip ? 6.8 : 5.1)
-          : (isFingertip ? 4.2 : 3.2);
-        const fill = isPrimary ? "#ffffff" : "#f3fbff";
-        const glow = isPrimary ? "rgba(185, 246, 255, 0.92)" : "rgba(139, 200, 255, 0.72)";
-        const alpha = isPrimary ? 0.98 : 0.8;
-        drawLandmarkDot(x, y, radius, fill, glow, alpha);
-      });
-
-      if (isPrimary && SHOW_HAND_MARKERS) {
-        const contact = midpointLandmark(hand[4], hand[8]) || hand[8];
-        const contactX = (1 - contact.x) * overlayEl.width;
-        const contactY = contact.y * overlayEl.height;
-        const pulse = pinchPulseRadius(interaction?.pinchStrength || 0);
-        ctx.globalAlpha = 0.9;
-        ctx.setLineDash([]);
-        drawPlacementReticle(contactX, contactY, pulse);
-
-        drawLandmarkDot(contactX, contactY, 6.8, "#ffffff", "rgba(185, 246, 255, 0.95)", 1);
-      }
-    });
+    if (SHOW_HAND_MARKERS) {
+      const contact = midpointLandmark(hand[4], hand[8]) || hand[8];
+      const c = toOverlay(contact);
+      const pulse = pinchPulseRadius(interaction?.pinchStrength || 0);
+      drawPlacementReticle(c.x, c.y, pulse);
+      drawLandmarkDot(c.x, c.y, 3.8, "rgba(126, 210, 238, 0.75)", "rgba(84, 170, 235, 0.2)", 0.8);
+    }
 
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;
@@ -575,9 +569,14 @@ export function bootstrapApp() {
 
       const interaction = pipeline.update(primary, secondary);
       const rawSignal = classifySignal(primary, interaction);
-      if (rawSignal === SIGNALS.FIST_DELETE) fistFrames += 1;
-      else fistFrames = 0;
-      const signal = fistFrames >= FIST_HOLD_FRAMES ? SIGNALS.FIST_DELETE : null;
+      if (rawSignal === SIGNALS.FIST_DELETE) {
+        if (fistHoldStartAt == null) fistHoldStartAt = now;
+      } else {
+        fistHoldStartAt = null;
+      }
+      const signal = (fistHoldStartAt != null && (now - fistHoldStartAt) >= FIST_HOLD_MS)
+        ? SIGNALS.FIST_DELETE
+        : null;
       const palmCenter = primary ? palmCenterLandmark(primary) : null;
       drawDebug(hands, interaction, primary);
       appState.interaction = interaction;
@@ -706,7 +705,7 @@ export function bootstrapApp() {
       if (!primary) {
         prevPinch = false;
         prevPlacementPulseActive = false;
-        fistFrames = 0;
+        fistHoldStartAt = null;
         smoothedPalm = null;
         smoothedPinch = null;
       }
@@ -777,6 +776,13 @@ export function bootstrapApp() {
 
   transformSnapModeEl.addEventListener("change", refreshDebug);
   transformLockModeEl.addEventListener("change", refreshDebug);
+  navigationModeEl?.addEventListener("change", () => {
+    if (typeof world.setNavigationMode === "function") {
+      world.setNavigationMode(navigationModeEl.value || "blender");
+    }
+    setStatus(`Navigation: ${navigationModeEl.value}`, "ok");
+    refreshDebug();
+  });
   bindValueEvents(rotationStepInputEl, refreshDebug);
   snapToggleEl.addEventListener("change", refreshDebug);
   bindValueEvents(gridStepInputEl, refreshDebug);
@@ -805,6 +811,14 @@ export function bootstrapApp() {
   clearBtn.addEventListener("click", clearAll);
   saveSceneBtn.addEventListener("click", saveScene);
   loadSceneBtn.addEventListener("click", () => loadSceneInput.click());
+  const onResetView = () => {
+    if (typeof world.resetView === "function") {
+      world.resetView();
+      setStatus("View reset to default", "ok");
+    }
+  };
+  resetViewBtn?.addEventListener("click", onResetView);
+  resetViewSceneBtn?.addEventListener("click", onResetView);
   loadSceneInput.addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
