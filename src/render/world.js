@@ -128,6 +128,50 @@ export function createWorld(container) {
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const lineUp = new THREE.Vector3(0, 1, 0);
+
+  function buildMaterial(color) {
+    const tone = new THREE.Color(color);
+    return new THREE.MeshStandardMaterial({
+      color: tone,
+      roughness: 0.24,
+      metalness: 0.08,
+      emissive: tone.clone().multiplyScalar(0.12),
+      emissiveIntensity: 0.38,
+      transparent: true,
+      opacity: 0.9,
+    });
+  }
+
+  function lineRadius(size = 1) {
+    return Math.max(0.035, Number(size || 1) * 0.09);
+  }
+
+  function normalizeLineEndpoints(start, end) {
+    const from = start.clone();
+    const to = end.clone();
+    if (from.distanceTo(to) < 0.02) {
+      to.x += 0.02;
+    }
+    return { from, to };
+  }
+
+  function applyLineTransform(mesh, start, end, size = 1) {
+    const { from, to } = normalizeLineEndpoints(start, end);
+    const delta = to.clone().sub(from);
+    const length = Math.max(0.02, delta.length());
+    const radius = lineRadius(size);
+    const nextGeometry = new THREE.CylinderGeometry(radius, radius, length, 18);
+    const midpoint = from.clone().lerp(to, 0.5);
+    const direction = delta.normalize();
+    const nextQuaternion = new THREE.Quaternion().setFromUnitVectors(lineUp, direction);
+
+    mesh.geometry?.dispose?.();
+    mesh.geometry = nextGeometry;
+    mesh.position.copy(midpoint);
+    mesh.quaternion.copy(nextQuaternion);
+    mesh.userData.selectionRadius = Math.max(length * 0.5, radius * 5);
+  }
 
   function resize() {
     const w = container.clientWidth;
@@ -148,26 +192,32 @@ export function createWorld(container) {
   function buildMesh(type, size, color) {
     let geometry;
     switch (type) {
+      case "line": geometry = new THREE.CylinderGeometry(lineRadius(size), lineRadius(size), Math.max(0.02, size), 18); break;
       case "cuboid": geometry = new THREE.BoxGeometry(size * 1.6, size, size * 0.9); break;
       case "sphere": geometry = new THREE.SphereGeometry(size * 0.6, 28, 20); break;
       case "cylinder": geometry = new THREE.CylinderGeometry(size * 0.45, size * 0.45, size * 1.4, 24); break;
       default: geometry = new THREE.BoxGeometry(size, size, size);
     }
 
-    const tone = new THREE.Color(color);
-    const material = new THREE.MeshStandardMaterial({
-      color: tone,
-      roughness: 0.24,
-      metalness: 0.08,
-      emissive: tone.clone().multiplyScalar(0.12),
-      emissiveIntensity: 0.38,
-      transparent: true,
-      opacity: 0.9,
-    });
+    const material = buildMaterial(color);
     const mesh = new THREE.Mesh(geometry, material);
     const bbox = new THREE.Box3().setFromObject(mesh);
     const halfHeight = (bbox.max.y - bbox.min.y) / 2;
     mesh.position.y = halfHeight;
+    return mesh;
+  }
+
+  function buildLineMesh(start, end, size, color) {
+    const mesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(lineRadius(size), lineRadius(size), 0.02, 18),
+      buildMaterial(color)
+    );
+    applyLineTransform(mesh, start, end, size);
+    return mesh;
+  }
+
+  function updateLineMesh(mesh, start, end, size) {
+    applyLineTransform(mesh, start, end, size);
     return mesh;
   }
 
@@ -243,6 +293,8 @@ export function createWorld(container) {
     renderer,
     projectToGround,
     buildMesh,
+    buildLineMesh,
+    updateLineMesh,
     createSelectionRing,
     createRotationGuide,
     createPalmProxy,

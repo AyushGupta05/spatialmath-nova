@@ -41,6 +41,15 @@ export function computeGeometry(shape, params) {
         surfaceArea: 2 * (w * h + w * d + h * d),
       };
     }
+    case "line": {
+      const length = Number(params.length ?? params.l ?? params.size ?? 1);
+      return {
+        shape,
+        labels: { length },
+        volume: 0,
+        surfaceArea: 0,
+      };
+    }
     default:
       return computeGeometry("cube", { a: 1 });
   }

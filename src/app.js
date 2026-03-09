@@ -20,7 +20,7 @@ const OVERLAY_MOTION_GAIN = 10.5;
 const OVERLAY_TRAIL_LENGTH = 7;
 const OVERLAY_TRAIL_MIN_STEP = 0.0032;
 const PALM_CENTER_INDEXES = [0, 5, 9, 13, 17];
-const SPAWN_COOLDOWN_MS = 220;
+const SPAWN_COOLDOWN_MS = 2000;
 const FIST_DELETE_COOLDOWN_MS = 420;
 const FIST_HOLD_MS = 180;
 const OPERATION_COOLDOWN_MS = 900;
@@ -39,7 +39,7 @@ const TRANSFORM_HAND_RETURN_MS = 850;
 const TRANSFORM_SCALE_SMOOTHING = 0.18;
 const TRANSFORM_ROTATION_SMOOTHING = 0.16;
 const PLACEMENT_PREVIEW_OPACITY = 0.28;
-const SHAPE_OPTIONS = ["cube", "cuboid", "sphere", "cylinder"];
+const SHAPE_OPTIONS = ["cube", "cuboid", "sphere", "cylinder", "line"];
 const SIGNALS = {
   FIST_DELETE: "fist_delete",
   POINT_ROTATE: "point_rotate",
@@ -99,9 +99,9 @@ export function bootstrapApp() {
   let smoothedPinch = null;
   let smoothedPrimaryIndex = null;
   let smoothedSecondaryIndex = null;
-  let lastSpawnAt = 0;
-  let lastFistDeleteAt = 0;
-  let lastOperationAt = 0;
+  let lastSpawnAt = -SPAWN_COOLDOWN_MS;
+  let lastFistDeleteAt = -FIST_DELETE_COOLDOWN_MS;
+  let lastOperationAt = -OPERATION_COOLDOWN_MS;
   let fistHoldStartAt = null;
   let smoothedSecondaryPalm = null;
   let transformMissingHandSince = null;
@@ -157,19 +157,114 @@ export function bootstrapApp() {
 
   function disposePlacementPreview() {
     if (!placementPreview?.mesh) {
+      if (placementPreview?.pointMarker) {
+        world.scene.remove(placementPreview.pointMarker);
+        placementPreview.pointMarker.geometry?.dispose?.();
+        placementPreview.pointMarker.material?.dispose?.();
+      }
       placementPreview = null;
       return;
     }
     world.scene.remove(placementPreview.mesh);
     placementPreview.mesh.geometry?.dispose?.();
     placementPreview.mesh.material?.dispose?.();
+    if (placementPreview.pointMarker) {
+      world.scene.remove(placementPreview.pointMarker);
+      placementPreview.pointMarker.geometry?.dispose?.();
+      placementPreview.pointMarker.material?.dispose?.();
+    }
     placementPreview = null;
+  }
+
+  function buildLinePointMarker(color, point) {
+    const marker = new THREE.Mesh(
+      new THREE.RingGeometry(0.11, 0.16, 32),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.82,
+        side: THREE.DoubleSide,
+      })
+    );
+    marker.rotation.x = -Math.PI / 2;
+    marker.position.copy(point);
+    marker.position.y += 0.015;
+    return marker;
+  }
+
+  function defaultLineEnd(startHit) {
+    const endHit = startHit.clone();
+    endHit.x += 0.28;
+    return endHit;
+  }
+
+  function lineLength(startHit, endHit) {
+    if (!startHit || !endHit) return 0;
+    return startHit.distanceTo(endHit);
+  }
+
+  function lineEndpointsForMesh(mesh) {
+    const start = Array.isArray(mesh?.userData?.lineStart)
+      ? new THREE.Vector3().fromArray(mesh.userData.lineStart)
+      : null;
+    const end = Array.isArray(mesh?.userData?.lineEnd)
+      ? new THREE.Vector3().fromArray(mesh.userData.lineEnd)
+      : null;
+    if (start && end) return { start, end };
+
+    const center = mesh?.position?.clone?.() || new THREE.Vector3();
+    const fallbackStart = center.clone().add(new THREE.Vector3(-0.45, 0, 0));
+    const fallbackEnd = center.clone().add(new THREE.Vector3(0.45, 0, 0));
+    return { start: fallbackStart, end: fallbackEnd };
+  }
+
+  function applyLineEndpoints(mesh, startHit, endHit, size = Number(sizeInputEl?.value || 1)) {
+    if (!mesh || !startHit || !endHit) return;
+    world.updateLineMesh(mesh, startHit, endHit, size);
+    mesh.userData.lineStart = startHit.toArray();
+    mesh.userData.lineEnd = endHit.toArray();
+  }
+
+  function normalizeLineAnchor(hitPoint) {
+    const anchor = anchoredPlacementHit(hitPoint);
+    if (!anchor) return null;
+    anchor.y = 0.03;
+    return anchor;
+  }
+
+  function resolveLineEndpoint(hitPoint, contactLandmark, startHit, startLandmark) {
+    if (!startHit) return null;
+    const endpoint = anchoredPlacementHit(hitPoint) || startHit.clone();
+    endpoint.y = 0.03;
+
+    if (!contactLandmark || !startLandmark) return endpoint;
+
+    const screenDx = Math.abs((contactLandmark.x ?? 0.5) - (startLandmark.x ?? 0.5));
+    const screenDy = (startLandmark.y ?? 0.5) - (contactLandmark.y ?? 0.5);
+    const elevated = screenDy > 0.028;
+
+    if (!elevated) return endpoint;
+
+    const lift = clamp(screenDy * 18, 0, 7.5);
+    endpoint.y = 0.03 + lift;
+    if (screenDx < 0.06) {
+      endpoint.x = startHit.x;
+      endpoint.z = startHit.z;
+    }
+    return endpoint;
   }
 
   function syncPreviewMeshAppearance(mesh, shape, color) {
     if (!mesh) return;
     if (mesh.userData.previewShape !== shape) {
-      const nextMesh = world.buildMesh(shape, Number(sizeInputEl.value), color);
+      const nextMesh = shape === "line"
+        ? world.buildLineMesh(
+          placementPreview?.lineStartHit || new THREE.Vector3(0, 0, 0),
+          placementPreview?.lineEndHit || defaultLineEnd(placementPreview?.lineStartHit || new THREE.Vector3(0, 0, 0)),
+          Number(sizeInputEl.value),
+          color
+        )
+        : world.buildMesh(shape, Number(sizeInputEl.value), color);
       const oldGeometry = mesh.geometry;
       const oldMaterial = mesh.material;
       mesh.geometry = nextMesh.geometry;
@@ -185,8 +280,84 @@ export function bootstrapApp() {
     mesh.material.depthWrite = false;
   }
 
-  function ensurePlacementPreview(hitPoint) {
+  function anchoredPlacementHit(hitPoint) {
     if (!hitPoint) return null;
+    const anchoredHit = hitPoint.clone();
+    anchoredHit.x = shouldSnapPosition() ? snapValue(hitPoint.x) : hitPoint.x;
+    anchoredHit.z = shouldSnapPosition() ? snapValue(hitPoint.z) : hitPoint.z;
+    return anchoredHit;
+  }
+
+  function createLinePlacementPreview(startHit, startLandmark, nextColor, nextSize) {
+    const mesh = world.buildLineMesh(startHit, defaultLineEnd(startHit), nextSize, nextColor);
+    const pointMarker = buildLinePointMarker(nextColor, startHit);
+    world.scene.add(mesh);
+    world.scene.add(pointMarker);
+    placementPreview = {
+      shape: "line",
+      mesh,
+      pointMarker,
+      previewSize: nextSize,
+      lineStartHit: startHit.clone(),
+      lineStartLandmark: cloneLandmark(startLandmark),
+      lineEndHit: null,
+      stage: "await-end-point",
+    };
+    syncPreviewMeshAppearance(mesh, "line", nextColor);
+    applyLineEndpoints(mesh, placementPreview.lineStartHit, defaultLineEnd(placementPreview.lineStartHit), nextSize);
+    return placementPreview;
+  }
+
+  function ensureLinePlacementPreview(hitPoint = null, contactLandmark = null) {
+    const nextColor = colorInputEl.value;
+    const nextSize = Number(sizeInputEl.value);
+
+    if (!placementPreview?.mesh || placementPreview.shape !== "line") {
+      const startHit = normalizeLineAnchor(hitPoint);
+      if (!startHit || !contactLandmark) return null;
+      return createLinePlacementPreview(startHit, contactLandmark, nextColor, nextSize);
+    }
+
+    if (placementPreview.previewSize !== nextSize) {
+      const savedStartHit = placementPreview.lineStartHit.clone();
+      const savedStartLandmark = cloneLandmark(placementPreview.lineStartLandmark);
+      const savedEndHit = placementPreview.lineEndHit?.clone?.() || null;
+      disposePlacementPreview();
+      createLinePlacementPreview(savedStartHit, savedStartLandmark, nextColor, nextSize);
+      placementPreview.lineEndHit = savedEndHit;
+    }
+
+    if (placementPreview.pointMarker) {
+      placementPreview.pointMarker.material.color.set(nextColor);
+      placementPreview.pointMarker.position.copy(placementPreview.lineStartHit);
+      placementPreview.pointMarker.position.y = placementPreview.lineStartHit.y + 0.015;
+    }
+
+    if (hitPoint && contactLandmark) {
+      placementPreview.lineEndHit = resolveLineEndpoint(
+        hitPoint,
+        contactLandmark,
+        placementPreview.lineStartHit,
+        placementPreview.lineStartLandmark
+      );
+    }
+
+    syncPreviewMeshAppearance(placementPreview.mesh, "line", nextColor);
+    const renderEnd = placementPreview.lineEndHit || defaultLineEnd(placementPreview.lineStartHit);
+    applyLineEndpoints(placementPreview.mesh, placementPreview.lineStartHit, renderEnd, nextSize);
+    placementPreview.previewSize = nextSize;
+    return placementPreview;
+  }
+
+  function ensurePlacementPreview(hitPoint = null, contactLandmark = null) {
+    if (placementPreview?.shape && placementPreview.shape !== shapeTypeEl.value) {
+      disposePlacementPreview();
+    }
+    if (shapeTypeEl.value === "line") {
+      return ensureLinePlacementPreview(hitPoint, contactLandmark);
+    }
+    const anchorHit = placementPreview?.anchorHit || anchoredPlacementHit(hitPoint);
+    if (!anchorHit) return null;
     const nextShape = shapeTypeEl.value;
     const nextColor = colorInputEl.value;
     const nextSize = Number(sizeInputEl.value);
@@ -196,31 +367,35 @@ export function bootstrapApp() {
       mesh.userData.previewShape = nextShape;
       mesh.userData.previewSize = nextSize;
       world.scene.add(mesh);
-      placementPreview = { mesh, hitPoint: hitPoint.clone() };
+      placementPreview = { shape: nextShape, mesh, anchorHit: anchorHit.clone() };
     }
 
     if (placementPreview.mesh.userData.previewSize !== nextSize) {
+      const fixedAnchorHit = placementPreview.anchorHit.clone();
       disposePlacementPreview();
       const mesh = world.buildMesh(nextShape, nextSize, nextColor);
       mesh.userData.previewShape = nextShape;
       mesh.userData.previewSize = nextSize;
       world.scene.add(mesh);
-      placementPreview = { mesh, hitPoint: hitPoint.clone() };
+      placementPreview = { shape: nextShape, mesh, anchorHit: fixedAnchorHit };
     }
 
     const previewMesh = placementPreview.mesh;
     syncPreviewMeshAppearance(previewMesh, nextShape, nextColor);
-    const targetX = shouldSnapPosition() ? snapValue(hitPoint.x) : hitPoint.x;
-    const targetZ = shouldSnapPosition() ? snapValue(hitPoint.z) : hitPoint.z;
-    previewMesh.position.x = THREE.MathUtils.lerp(previewMesh.position.x, targetX, 0.35);
-    previewMesh.position.z = THREE.MathUtils.lerp(previewMesh.position.z, targetZ, 0.35);
+    previewMesh.position.x = placementPreview.anchorHit.x;
+    previewMesh.position.z = placementPreview.anchorHit.z;
     alignMeshToGround(previewMesh);
-    placementPreview.hitPoint = hitPoint.clone();
     return placementPreview;
   }
 
   function confirmPlacementPreview(now) {
     if (!placementPreview?.mesh) return false;
+    if (placementPreview.shape === "line") {
+      if (!placementPreview.lineEndHit || lineLength(placementPreview.lineStartHit, placementPreview.lineEndHit) < 0.08) {
+        setStatus("Pick a second point a little farther away for the line end", "idle");
+        return false;
+      }
+    }
     const mesh = placementPreview.mesh;
     mesh.material.opacity = 0.9;
     mesh.material.depthWrite = true;
@@ -228,16 +403,21 @@ export function bootstrapApp() {
     mesh.userData.baseSize = Number(sizeInputEl.value);
     delete mesh.userData.previewShape;
     delete mesh.userData.previewSize;
-    mesh.rotation.y = snapRotation(Math.random() * Math.PI);
+    if (placementPreview.shape === "line") {
+      applyLineEndpoints(mesh, placementPreview.lineStartHit, placementPreview.lineEndHit, Number(sizeInputEl.value));
+    } else {
+      mesh.rotation.y = snapRotation(Math.random() * Math.PI);
+      delete mesh.userData.lineStart;
+      delete mesh.userData.lineEnd;
+    }
     ensureMeshIdentity(mesh);
     updateMeshMetadata(mesh);
     placedMeshes.push(mesh);
     enforceMeshBudget();
-    updateGeometryMetrics(mesh.userData.shape, mesh.userData.baseSize);
+    updateGeometryMetrics(mesh.userData.shape, mesh.userData.baseSize, mesh);
     setActiveMesh(mesh);
     setStatus(`Placed ${mesh.userData.shape}`, "ok");
     placementPreview = null;
-    lastSpawnAt = now;
     lastOperationAt = now;
     return true;
   }
@@ -495,6 +675,14 @@ export function bootstrapApp() {
 
   function pickDeleteTarget(hitPoint) {
     return pickReachableMesh(hitPoint, 1.2, -0.18);
+  }
+
+  function pickDeleteTargetFromHand(palmHit, pinchHit, indexHit) {
+    return (
+      pickReachableMesh(pinchHit, 1.55, 0.12) ||
+      pickReachableMesh(indexHit, 1.5, 0.08) ||
+      pickReachableMesh(palmHit, 1.4, -0.02)
+    );
   }
 
   function pickRotationTarget(pointerHit, fallbackHit) {
@@ -844,7 +1032,11 @@ export function bootstrapApp() {
       color = colorHex(mesh);
     }
 
-    const tempMesh = world.buildMesh(shape, Number(mesh.userData.baseSize || 1), color);
+    const currentSize = Number(mesh.userData.baseSize || 1);
+    const lineEndpoints = lineEndpointsForMesh(mesh);
+    const tempMesh = shape === "line"
+      ? world.buildLineMesh(lineEndpoints.start, lineEndpoints.end, currentSize, color)
+      : world.buildMesh(shape, currentSize, color);
     const oldGeometry = mesh.geometry;
     const oldMaterial = mesh.material;
 
@@ -852,12 +1044,19 @@ export function bootstrapApp() {
     mesh.material = tempMesh.material;
     mesh.userData.shape = shape;
     mesh.userData.baseEmissive = mesh.material.emissive.getHex();
-    alignMeshToGround(mesh);
+    if (shape === "line") {
+      applyLineEndpoints(mesh, lineEndpoints.start, lineEndpoints.end, currentSize);
+    } else {
+      delete mesh.userData.lineStart;
+      delete mesh.userData.lineEnd;
+      alignMeshToGround(mesh);
+    }
     updateMeshMetadata(mesh);
     updateGeometryMetrics(
       shape,
       Number(mesh.userData.baseSize || sizeInputEl?.value || 1) *
-        ((Math.abs(mesh.scale.x || 1) + Math.abs(mesh.scale.y || 1) + Math.abs(mesh.scale.z || 1)) / 3)
+        ((Math.abs(mesh.scale.x || 1) + Math.abs(mesh.scale.y || 1) + Math.abs(mesh.scale.z || 1)) / 3),
+      mesh
     );
 
     oldGeometry?.dispose?.();
@@ -869,6 +1068,7 @@ export function bootstrapApp() {
   }
 
   function alignMeshToGround(mesh) {
+    if (mesh?.userData?.shape === "line") return;
     if (!mesh?.geometry) return;
     mesh.geometry.computeBoundingBox?.();
     const bbox = mesh.geometry.boundingBox;
@@ -882,8 +1082,8 @@ export function bootstrapApp() {
     const currentColor = colorHex(mesh);
     const text = String(rawValue || "").trim();
     const shapeMatch =
-      text.match(/shape\s*[:=]\s*(cube|cuboid|sphere|cylinder)/i) ||
-      text.match(/\b(cube|cuboid|sphere|cylinder)\b/i);
+      text.match(/shape\s*[:=]\s*(cube|cuboid|sphere|cylinder|line)/i) ||
+      text.match(/\b(cube|cuboid|sphere|cylinder|line)\b/i);
     const hexMatch = text.match(/#[0-9a-f]{3,8}\b/i);
     const colorMatch = text.match(/color\s*[:=]\s*([^\s,;]+)/i);
     const nextShape = shapeMatch ? shapeMatch[1].toLowerCase() : currentShape;
@@ -938,7 +1138,7 @@ export function bootstrapApp() {
 
     objectCountEl.textContent = String(placedMeshes.length);
     if (!placedMeshes.length) {
-      objectListEl.innerHTML = `<div class="object-empty">Place an object to start an editable list, then type updates like <code>shape=sphere color=#ff8c64</code>.</div>`;
+      objectListEl.innerHTML = `<div class="object-empty">Place an object to start an editable list, then type updates like <code>shape=line color=#ff8c64</code>.</div>`;
       return;
     }
 
@@ -1202,12 +1402,15 @@ export function bootstrapApp() {
     }, null, 2);
   }
 
-  function updateGeometryMetrics(shape, size) {
+  function updateGeometryMetrics(shape, size, mesh = null) {
     let metrics;
     if (shape === "sphere") metrics = computeGeometry(shape, { r: size * 0.6 });
     else if (shape === "cylinder") metrics = computeGeometry(shape, { r: size * 0.45, h: size * 1.4 });
     else if (shape === "cuboid") metrics = computeGeometry(shape, { w: size * 1.6, h: size, d: size * 0.9 });
-    else metrics = computeGeometry("cube", { a: size });
+    else if (shape === "line") {
+      const endpoints = mesh ? lineEndpointsForMesh(mesh) : null;
+      metrics = computeGeometry(shape, { length: endpoints ? lineLength(endpoints.start, endpoints.end) : size });
+    } else metrics = computeGeometry("cube", { a: size });
 
     appState.shape = shape;
     appState.dimension = size;
@@ -1245,9 +1448,9 @@ export function bootstrapApp() {
     refreshDebug();
   }
 
-  function deleteNearestToPalm(palmHit) {
-    if (!palmHit) return false;
-    const target = pickDeleteTarget(palmHit);
+  function deleteNearestToHand(palmHit, pinchHit = null, indexHit = null) {
+    if (!palmHit && !pinchHit && !indexHit) return false;
+    const target = pickDeleteTargetFromHand(palmHit, pinchHit, indexHit);
     if (!target) return false;
     const idx = placedMeshes.indexOf(target);
     if (idx >= 0) placedMeshes.splice(idx, 1);
@@ -1279,6 +1482,8 @@ export function bootstrapApp() {
       shape: m.userData.shape || "cube",
       baseSize: m.userData.baseSize || 1,
       color: `#${m.material.color.getHexString()}`,
+      lineStart: Array.isArray(m.userData.lineStart) ? m.userData.lineStart : null,
+      lineEnd: Array.isArray(m.userData.lineEnd) ? m.userData.lineEnd : null,
       position: m.position.toArray(),
       rotationY: m.rotation.y,
       scale: m.scale.toArray(),
@@ -1300,14 +1505,28 @@ export function bootstrapApp() {
   function loadScene(data) {
     clearAll();
     data.forEach((item) => {
-      const mesh = world.buildMesh(item.shape || "cube", Number(item.baseSize || 1), item.color || "#7cf7e4");
-      mesh.position.fromArray(item.position || [0, 0.5, 0]);
-      mesh.rotation.y = Number(item.rotationY || 0);
+      const shape = item.shape || "cube";
+      const size = Number(item.baseSize || 1);
+      const color = item.color || "#7cf7e4";
+      const mesh = shape === "line" && Array.isArray(item.lineStart) && Array.isArray(item.lineEnd)
+        ? world.buildLineMesh(
+          new THREE.Vector3().fromArray(item.lineStart),
+          new THREE.Vector3().fromArray(item.lineEnd),
+          size,
+          color
+        )
+        : world.buildMesh(shape, size, color);
+      if (shape !== "line") {
+        mesh.position.fromArray(item.position || [0, 0.5, 0]);
+        mesh.rotation.y = Number(item.rotationY || 0);
+      }
       if (Array.isArray(item.scale)) mesh.scale.fromArray(item.scale);
       if (item.objectSerial) mesh.userData.objectSerial = Number(item.objectSerial);
       if (item.label) mesh.userData.label = item.label;
-      mesh.userData.shape = item.shape || "cube";
-      mesh.userData.baseSize = Number(item.baseSize || 1);
+      mesh.userData.shape = shape;
+      mesh.userData.baseSize = size;
+      if (Array.isArray(item.lineStart)) mesh.userData.lineStart = item.lineStart;
+      if (Array.isArray(item.lineEnd)) mesh.userData.lineEnd = item.lineEnd;
       ensureMeshIdentity(mesh);
       updateMeshMetadata(mesh);
       world.scene.add(mesh);
@@ -1352,6 +1571,7 @@ export function bootstrapApp() {
       const primaryPalmHitRaw = primaryPalm ? world.projectToGround(primaryPalm) : null;
       const secondaryPalmHitRaw = secondaryPalm ? world.projectToGround(secondaryPalm) : null;
       const pinchContact = primary ? midpointLandmark(primary[4], primary[8]) : null;
+      const primaryContactLandmark = pinchContact || primary?.[8] || null;
       const pinchHitRaw = pinchContact ? world.projectToGround(pinchContact) : null;
       const primaryIndexHitRaw = primary?.[8] ? world.projectToGround(primary[8]) : null;
       const secondaryIndexHitRaw = secondary?.[8] ? world.projectToGround(secondary[8]) : null;
@@ -1373,7 +1593,9 @@ export function bootstrapApp() {
       const indexMidpoint = primaryIndexHit && secondaryIndexHit
         ? primaryIndexHit.clone().lerp(secondaryIndexHit, 0.5)
         : primaryIndexHit;
-      const deleteTarget = autoMode === "spawn" ? pickDeleteTarget(primaryPalmHit) : null;
+      const deleteTarget = autoMode === "spawn"
+        ? pickDeleteTargetFromHand(primaryPalmHit, pinchHit, primaryIndexHit)
+        : null;
       const thumbsUpPose = autoMode === "spawn" && primary ? isThumbsUpPose(primary) : false;
       const thumbsDownPose = autoMode === "spawn" && primary ? isThumbsDownPose(primary) : false;
       const twoHandPointPose = autoMode === "transform" && primary && secondary
@@ -1449,6 +1671,7 @@ export function bootstrapApp() {
 
       const dynamicAlpha = Math.max(0.16, Math.min(0.62, 0.55 - interaction.jitter * 2.2));
       pipeline.setAlpha(dynamicAlpha);
+      const conjureCooldownActive = autoMode === "spawn" && !placementPreview && (now - lastSpawnAt) < SPAWN_COOLDOWN_MS;
 
       if (autoMode === "spawn" && primary && !transformEndedThisFrame && !transformPausedForMissingHand) {
         const pinchActive = interaction.pinch && signal !== SIGNALS.FIST_DELETE;
@@ -1458,16 +1681,39 @@ export function bootstrapApp() {
         const placementPulseTrigger = placementPulseActive && !prevPlacementPulseActive;
         const canSpawn = now - lastSpawnAt >= SPAWN_COOLDOWN_MS;
         const canOperate = now - lastOperationAt >= OPERATION_COOLDOWN_MS;
+        const lineToolActive = shapeTypeEl.value === "line";
+        const hadLineDraft = placementPreview?.shape === "line";
 
-        const shouldPreview = canSpawn && pinchHit && (pinchStart || placementPulseTrigger || placementPreview);
-        if (shouldPreview && pinchHit) {
-          ensurePlacementPreview(pinchHit);
+        if (lineToolActive) {
+          if (!hadLineDraft && canSpawn && pinchHit && primaryContactLandmark && (pinchStart || placementPulseTrigger)) {
+            ensurePlacementPreview(pinchHit, primaryContactLandmark);
+            setStatus("Line start placed. Move to the next point and pinch again to finish", "ok");
+          } else if (hadLineDraft) {
+            ensurePlacementPreview(pinchHit, primaryContactLandmark);
+            if (pinchStart && placementPreview?.lineEndHit) {
+              if (confirmPlacementPreview(now)) {
+                lastSpawnAt = now;
+              }
+            }
+          }
+        } else {
+          const shouldConjurePreview =
+            !placementPreview &&
+            canSpawn &&
+            pinchHit &&
+            (pinchStart || placementPulseTrigger);
+          if (shouldConjurePreview) {
+            ensurePlacementPreview(pinchHit);
+            lastSpawnAt = now;
+          } else if (placementPreview) {
+            ensurePlacementPreview();
+          }
         }
 
         if (placementPreview && thumbsDownPose) {
           disposePlacementPreview();
           setStatus("Placement cancelled", "idle");
-        } else if (placementPreview && thumbsUpPose && canOperate) {
+        } else if (!lineToolActive && placementPreview && thumbsUpPose && canOperate) {
           confirmPlacementPreview(now);
         }
 
@@ -1477,7 +1723,7 @@ export function bootstrapApp() {
           deleteTarget &&
           now - lastOperationAt >= OPERATION_COOLDOWN_MS &&
           now - lastFistDeleteAt >= FIST_DELETE_COOLDOWN_MS;
-        if (canDeleteWithFist && deleteNearestToPalm(primaryPalmHit)) {
+        if (canDeleteWithFist && deleteNearestToHand(primaryPalmHit, pinchHit, primaryIndexHit)) {
           lastFistDeleteAt = now;
           lastOperationAt = now;
         }
@@ -1575,7 +1821,8 @@ export function bootstrapApp() {
           updateGeometryMetrics(
             transformSession.mesh.userData.shape || shapeTypeEl.value,
             Number(transformSession.mesh.userData.baseSize || sizeInputEl.value) *
-              ((transformSession.mesh.scale.x + transformSession.mesh.scale.y + transformSession.mesh.scale.z) / 3)
+              ((transformSession.mesh.scale.x + transformSession.mesh.scale.y + transformSession.mesh.scale.z) / 3),
+            transformSession.mesh
           );
 
           selectionRing.position.set(transformSession.mesh.position.x, 0.02, transformSession.mesh.position.z);
@@ -1589,7 +1836,7 @@ export function bootstrapApp() {
       }
 
       if (!interaction.handsDetected) {
-        if (placementPreview) {
+        if (placementPreview && placementPreview.shape !== "line") {
           disposePlacementPreview();
         }
         setIntent("waiting for hands", "idle");
@@ -1599,18 +1846,26 @@ export function bootstrapApp() {
       } else if (transformEndedThisFrame && thumbsUpRelease) {
         setIntent("ending transform", "ok");
       } else if (autoMode === "spawn") {
-        if (placementPreview && thumbsUpPose) {
+        if (placementPreview?.shape === "line" && thumbsDownPose) {
+          setIntent("thumbs down to cancel the line", "idle");
+        } else if (placementPreview?.shape === "line") {
+          setIntent("move to the second point and pinch again to place the line", "idle");
+        } else if (placementPreview && thumbsUpPose) {
           setIntent("thumbs up to place", "ok");
         } else if (placementPreview && thumbsDownPose) {
           setIntent("thumbs down to cancel", "idle");
         } else if (placementPreview) {
           setIntent("preview active: thumbs up to place, thumbs down to cancel", "idle");
+        } else if (interaction.pinch && conjureCooldownActive) {
+          setIntent("wait 2 seconds before conjuring another shape", "idle");
         } else if (signal === SIGNALS.FIST_DELETE) {
           setIntent("fist delete", "ok");
         } else if (primary && isFistPose(primary) && !deleteTarget) {
           setIntent("move closer to an object to delete", "idle");
         } else if (interaction.pinch) {
-          setIntent("pinch to position preview", "ok");
+          setIntent(shapeTypeEl.value === "line" ? "pinch to pick a line point" : "pinch to position preview", "ok");
+        } else if (shapeTypeEl.value === "line") {
+          setIntent("pinch one point to start a line", "idle");
         } else {
           setIntent("ready to place", "idle");
         }
@@ -1646,7 +1901,9 @@ export function bootstrapApp() {
         overlayHandStates = [];
         pendingTransformCandidate = null;
         pendingTransformSince = null;
-        disposePlacementPreview();
+        if (placementPreview?.shape !== "line") {
+          disposePlacementPreview();
+        }
         if (!transformSession) rotationSession = null;
       } else if (!secondary) {
         smoothedSecondaryPalm = null;
@@ -1737,6 +1994,13 @@ export function bootstrapApp() {
   });
 
   function applySidebarShapeColorToSelection() {
+    if (placementPreview) {
+      if (placementPreview.shape === "line" && shapeTypeEl.value !== "line") {
+        disposePlacementPreview();
+      } else {
+        ensurePlacementPreview();
+      }
+    }
     if (!activeMesh) {
       refreshDebug();
       return;

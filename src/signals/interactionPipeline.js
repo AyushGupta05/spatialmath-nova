@@ -3,11 +3,11 @@ import { clamp, ema, dist3, angle2 } from "../core/math.js";
 export class InteractionPipeline {
   constructor(options = {}) {
     this.alpha = options.alpha ?? 0.38;
-    this.pinchOnMin = options.pinchOnMin ?? 0.038;
-    this.pinchOnMax = options.pinchOnMax ?? 0.058;
+    this.pinchOnMin = options.pinchOnMin ?? 0.0385;
+    this.pinchOnMax = options.pinchOnMax ?? 0.0585;
     this.pinchOffMin = options.pinchOffMin ?? 0.058;
     this.pinchOffMax = options.pinchOffMax ?? 0.095;
-    this.pinchOnRatio = options.pinchOnRatio ?? 0.34;
+    this.pinchOnRatio = options.pinchOnRatio ?? 0.35;
     this.pinchOffRatio = options.pinchOffRatio ?? 0.52;
     this.prevResize = 0;
     this.prevRotation = 0;
@@ -31,45 +31,45 @@ export class InteractionPipeline {
 
   setProfile(profile) {
     if (profile === "stable") {
-      this.pinchOnMin = 0.04;
-      this.pinchOnMax = 0.056;
+      this.pinchOnMin = 0.0405;
+      this.pinchOnMax = 0.0565;
       this.pinchOffMin = 0.062;
       this.pinchOffMax = 0.092;
-      this.pinchOnRatio = 0.35;
+      this.pinchOnRatio = 0.355;
       this.pinchOffRatio = 0.56;
       this.pinchOnFrames = 3;
       this.pinchOffFrames = 3;
-      this.pinchVelocityOn = -0.0028;
+      this.pinchVelocityOn = -0.0019;
       this.pinchVelocityOff = 0.0012;
       this.setAlpha(0.52);
       return;
     }
 
     if (profile === "responsive") {
-      this.pinchOnMin = 0.037;
-      this.pinchOnMax = 0.058;
+      this.pinchOnMin = 0.0385;
+      this.pinchOnMax = 0.0595;
       this.pinchOffMin = 0.055;
       this.pinchOffMax = 0.1;
       this.pinchOnRatio = 0.36;
       this.pinchOffRatio = 0.58;
       this.pinchOnFrames = 2;
       this.pinchOffFrames = 1;
-      this.pinchVelocityOn = -0.0042;
+      this.pinchVelocityOn = -0.0028;
       this.pinchVelocityOff = 0.002;
       this.setAlpha(0.24);
       return;
     }
 
-    // balanced (slightly looser pinch threshold for webcam variability)
-    this.pinchOnMin = 0.038;
-    this.pinchOnMax = 0.058;
+    // balanced, eased back so ordinary pinches register without fighting the user
+    this.pinchOnMin = 0.0385;
+    this.pinchOnMax = 0.0585;
     this.pinchOffMin = 0.058;
     this.pinchOffMax = 0.095;
-    this.pinchOnRatio = 0.34;
-    this.pinchOffRatio = 0.54;
+    this.pinchOnRatio = 0.35;
+    this.pinchOffRatio = 0.52;
     this.pinchOnFrames = 2;
     this.pinchOffFrames = 2;
-    this.pinchVelocityOn = -0.0034;
+    this.pinchVelocityOn = -0.0021;
     this.pinchVelocityOff = 0.0015;
   }
 
@@ -108,8 +108,31 @@ export class InteractionPipeline {
       pinchOffThreshold = pinchOnThreshold + 0.004;
     }
 
-    const canStartPinch = (pinchDist <= pinchOnThreshold || pinchRatioEma <= this.pinchOnRatio) && pinchVelocity <= this.pinchVelocityOn;
-    const canEndPinch = (pinchDist >= pinchOffThreshold && pinchRatioEma >= this.pinchOffRatio) && pinchVelocity >= this.pinchVelocityOff;
+    const palmCenter = {
+      x: (hand[0].x + hand[5].x + hand[9].x + hand[13].x + hand[17].x) / 5,
+      y: (hand[0].y + hand[5].y + hand[9].y + hand[13].y + hand[17].y) / 5,
+      z: (hand[0].z + hand[5].z + hand[9].z + hand[13].z + hand[17].z) / 5,
+    };
+    const palmScale = Math.max(0.0001, dist3(wrist, hand[9]));
+    const pinchMidpoint = {
+      x: (thumb.x + index.x) * 0.5,
+      y: (thumb.y + index.y) * 0.5,
+      z: (thumb.z + index.z) * 0.5,
+    };
+    const pinchPoseReady =
+      (dist3(index, palmCenter) / palmScale) > 0.68 &&
+      (dist3(thumb, palmCenter) / palmScale) > 0.46 &&
+      (dist3(pinchMidpoint, palmCenter) / palmScale) > 0.39 &&
+      dist3(index, wrist) > dist3(hand[6], wrist) * 0.995 &&
+      dist3(thumb, wrist) > dist3(hand[3], wrist) * 0.995;
+
+    const canStartPinch =
+      pinchPoseReady &&
+      (pinchDist <= pinchOnThreshold || pinchRatioEma <= this.pinchOnRatio) &&
+      pinchVelocity <= this.pinchVelocityOn;
+    const canEndPinch =
+      !pinchPoseReady ||
+      ((pinchDist >= pinchOffThreshold && pinchRatioEma >= this.pinchOffRatio) && pinchVelocity >= this.pinchVelocityOff);
 
     this.pinchDist = pinchDist;
     if (!this.pinch && canStartPinch) {
@@ -158,6 +181,7 @@ export class InteractionPipeline {
       pinchRatio: pinchRatioEma,
       pinchVelocity,
       pinchStrength: clamp((pinchOffThreshold - pinchDist) / Math.max(0.0001, (pinchOffThreshold - pinchOnThreshold)), 0, 1),
+      pinchPoseReady,
       jitter,
       wristToIndex,
       pinchOnThreshold,
