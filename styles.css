@@ -482,27 +482,56 @@ input[type="color"]::-webkit-color-swatch {
 }
 
 .object-item {
-  padding: 10px 12px;
+  padding: 12px 12px 11px;
   border: 1px solid rgba(76, 133, 196, 0.14);
   border-radius: 12px;
-  background: rgba(9, 20, 36, 0.88);
+  background: rgba(9, 20, 36, 0.76);
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
 }
 
 .object-item + .object-item {
   margin-top: 8px;
 }
 
-.object-title {
+.object-item.is-active {
+  border-color: rgba(122, 247, 228, 0.34);
+  background: rgba(9, 24, 40, 0.94);
+  box-shadow:
+    inset 0 1px 0 rgba(126, 214, 255, 0.08),
+    0 0 0 1px rgba(122, 247, 228, 0.12);
+}
+
+.object-item-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 4px;
+  gap: 9px;
+  margin-bottom: 8px;
   color: var(--text);
   font-size: 0.84rem;
 }
 
-.object-title span {
+.object-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--swatch);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 0 10px rgba(122, 247, 228, 0.22);
+  flex: 0 0 auto;
+}
+
+.object-label {
+  font-family: "Exo 2", "Space Grotesk", sans-serif;
+  letter-spacing: 0.05em;
+}
+
+.object-state {
+  margin-left: auto;
   color: var(--accent);
   font-size: 0.66rem;
   font-weight: 700;
@@ -510,10 +539,53 @@ input[type="color"]::-webkit-color-swatch {
   text-transform: uppercase;
 }
 
-.object-meta {
+.object-expression {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding-left: 2px;
+}
+
+.object-equals {
+  color: rgba(180, 225, 255, 0.82);
+  font-weight: 600;
+  text-align: center;
+}
+
+.object-editor {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 0 2px;
+  border: 0;
+  border-bottom: 1px dashed rgba(122, 247, 228, 0.22);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+  box-shadow: none;
+  cursor: text;
+}
+
+.object-editor:focus-visible {
+  outline: none;
+  border-bottom-color: rgba(122, 247, 228, 0.62);
+}
+
+.object-empty {
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.73rem;
   line-height: 1.45;
+}
+
+.object-empty {
+  padding: 12px;
+}
+
+.object-empty code {
+  color: #b9efff;
+  font-family: "Space Grotesk", "Segoe UI Variable Text", "Segoe UI", sans-serif;
 }
 
 .debug-box {

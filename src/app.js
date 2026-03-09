@@ -23,7 +23,7 @@ const PALM_CENTER_INDEXES = [0, 5, 9, 13, 17];
 const SPAWN_COOLDOWN_MS = 220;
 const FIST_DELETE_COOLDOWN_MS = 420;
 const FIST_HOLD_MS = 180;
-const OPERATION_COOLDOWN_MS = 2500;
+const OPERATION_COOLDOWN_MS = 900;
 const PLACEMENT_PULSE_BASE = 8;
 const PLACEMENT_PULSE_GAIN = 7;
 const PLACEMENT_PULSE_TRIGGER_RADIUS = 12.2;
@@ -32,12 +32,17 @@ const TRANSFORM_SELECT_BUFFER = 0.95;
 const TRANSFORM_MIDPOINT_RADIUS_FACTOR = 1.08;
 const TRANSFORM_OPPOSITION_DOT_MAX = 0.72;
 const MIN_TRANSFORM_SPAN = 0.3;
-const MIN_HAND_AXIS_SPAN = 0.05;
-const MIN_MESH_SCALE = 0.25;
-const MAX_MESH_SCALE = 8;
+const MIN_MESH_SCALE = 0.35;
+const MAX_MESH_SCALE = 4.5;
 const TRANSFORM_LOCK_MS = 90;
+const TRANSFORM_HAND_RETURN_MS = 850;
+const TRANSFORM_SCALE_SMOOTHING = 0.18;
+const TRANSFORM_ROTATION_SMOOTHING = 0.16;
+const PLACEMENT_PREVIEW_OPACITY = 0.28;
+const SHAPE_OPTIONS = ["cube", "cuboid", "sphere", "cylinder"];
 const SIGNALS = {
   FIST_DELETE: "fist_delete",
+  POINT_ROTATE: "point_rotate",
 };
 
 export function bootstrapApp() {
@@ -54,7 +59,6 @@ export function bootstrapApp() {
   const resetViewSceneBtn = document.querySelector("#resetViewSceneBtn");
   const loadSceneInput = document.querySelector("#loadSceneInput");
   const shapeTypeEl = document.querySelector("#shapeType");
-  const gestureModeEl = document.querySelector("#gestureMode");
   const sizeInputEl = document.querySelector("#sizeInput");
   const colorInputEl = document.querySelector("#colorInput");
   const smoothingInputEl = document.querySelector("#smoothingInput");
@@ -64,7 +68,6 @@ export function bootstrapApp() {
   const snapToggleEl = document.querySelector("#snapToggle");
   const gridStepInputEl = document.querySelector("#gridStepInput");
   const transformSnapModeEl = document.querySelector("#transformSnapMode");
-  const transformLockModeEl = document.querySelector("#transformLockMode");
   const navigationModeEl = document.querySelector("#navigationMode");
   const rotationStepInputEl = document.querySelector("#rotationStepInput");
   const debugStateEl = document.querySelector("#debugState");
@@ -83,11 +86,6 @@ export function bootstrapApp() {
   const pipeline = new InteractionPipeline({ alpha: appState.calibration.smoothingAlpha });
   smoothingInputEl.value = String(appState.calibration.smoothingAlpha);
   pipeline.setProfile("balanced");
-  if (gestureModeEl) {
-    gestureModeEl.disabled = true;
-    gestureModeEl.title = "Mode switches automatically: one hand places/deletes, two hands transform.";
-    gestureModeEl.value = "spawn";
-  }
 
   let handLandmarker = null;
   let stream = null;
@@ -95,19 +93,26 @@ export function bootstrapApp() {
   let lastInferAt = 0;
   let running = false;
   let prevPinch = false;
+  let prevPointPose = false;
   let prevPlacementPulseActive = false;
   let smoothedPalm = null;
   let smoothedPinch = null;
+  let smoothedPrimaryIndex = null;
+  let smoothedSecondaryIndex = null;
   let lastSpawnAt = 0;
   let lastFistDeleteAt = 0;
   let lastOperationAt = 0;
   let fistHoldStartAt = null;
   let smoothedSecondaryPalm = null;
+  let transformMissingHandSince = null;
   let overlayHandStates = [];
   let transformSession = null;
   let pendingTransformCandidate = null;
   let pendingTransformSince = null;
+  let rotationSession = null;
   let activeMesh = null;
+  let nextObjectSerial = 0;
+  let placementPreview = null;
   const placedMeshes = [];
   const MAX_MESHES = 220;
   const calibrationPresets = {
@@ -143,18 +148,104 @@ export function bootstrapApp() {
       renderObjectList();
       return;
     }
+    if (shapeTypeEl && activeMesh.userData?.shape) shapeTypeEl.value = activeMesh.userData.shape;
+    if (colorInputEl && activeMesh.material?.color) colorInputEl.value = `#${activeMesh.material.color.getHexString()}`;
     selectionRing.position.set(activeMesh.position.x, 0.02, activeMesh.position.z);
     rotationGuide.visible = false;
     renderObjectList();
+  }
+
+  function disposePlacementPreview() {
+    if (!placementPreview?.mesh) {
+      placementPreview = null;
+      return;
+    }
+    world.scene.remove(placementPreview.mesh);
+    placementPreview.mesh.geometry?.dispose?.();
+    placementPreview.mesh.material?.dispose?.();
+    placementPreview = null;
+  }
+
+  function syncPreviewMeshAppearance(mesh, shape, color) {
+    if (!mesh) return;
+    if (mesh.userData.previewShape !== shape) {
+      const nextMesh = world.buildMesh(shape, Number(sizeInputEl.value), color);
+      const oldGeometry = mesh.geometry;
+      const oldMaterial = mesh.material;
+      mesh.geometry = nextMesh.geometry;
+      mesh.material = nextMesh.material;
+      oldGeometry?.dispose?.();
+      oldMaterial?.dispose?.();
+      mesh.userData.previewShape = shape;
+    }
+    mesh.material.color.set(color);
+    mesh.material.emissive.copy(mesh.material.color).multiplyScalar(0.08);
+    mesh.material.opacity = PLACEMENT_PREVIEW_OPACITY;
+    mesh.material.transparent = true;
+    mesh.material.depthWrite = false;
+  }
+
+  function ensurePlacementPreview(hitPoint) {
+    if (!hitPoint) return null;
+    const nextShape = shapeTypeEl.value;
+    const nextColor = colorInputEl.value;
+    const nextSize = Number(sizeInputEl.value);
+
+    if (!placementPreview?.mesh) {
+      const mesh = world.buildMesh(nextShape, nextSize, nextColor);
+      mesh.userData.previewShape = nextShape;
+      mesh.userData.previewSize = nextSize;
+      world.scene.add(mesh);
+      placementPreview = { mesh, hitPoint: hitPoint.clone() };
+    }
+
+    if (placementPreview.mesh.userData.previewSize !== nextSize) {
+      disposePlacementPreview();
+      const mesh = world.buildMesh(nextShape, nextSize, nextColor);
+      mesh.userData.previewShape = nextShape;
+      mesh.userData.previewSize = nextSize;
+      world.scene.add(mesh);
+      placementPreview = { mesh, hitPoint: hitPoint.clone() };
+    }
+
+    const previewMesh = placementPreview.mesh;
+    syncPreviewMeshAppearance(previewMesh, nextShape, nextColor);
+    const targetX = shouldSnapPosition() ? snapValue(hitPoint.x) : hitPoint.x;
+    const targetZ = shouldSnapPosition() ? snapValue(hitPoint.z) : hitPoint.z;
+    previewMesh.position.x = THREE.MathUtils.lerp(previewMesh.position.x, targetX, 0.35);
+    previewMesh.position.z = THREE.MathUtils.lerp(previewMesh.position.z, targetZ, 0.35);
+    alignMeshToGround(previewMesh);
+    placementPreview.hitPoint = hitPoint.clone();
+    return placementPreview;
+  }
+
+  function confirmPlacementPreview(now) {
+    if (!placementPreview?.mesh) return false;
+    const mesh = placementPreview.mesh;
+    mesh.material.opacity = 0.9;
+    mesh.material.depthWrite = true;
+    mesh.userData.shape = shapeTypeEl.value;
+    mesh.userData.baseSize = Number(sizeInputEl.value);
+    delete mesh.userData.previewShape;
+    delete mesh.userData.previewSize;
+    mesh.rotation.y = snapRotation(Math.random() * Math.PI);
+    ensureMeshIdentity(mesh);
+    updateMeshMetadata(mesh);
+    placedMeshes.push(mesh);
+    enforceMeshBudget();
+    updateGeometryMetrics(mesh.userData.shape, mesh.userData.baseSize);
+    setActiveMesh(mesh);
+    setStatus(`Placed ${mesh.userData.shape}`, "ok");
+    placementPreview = null;
+    lastSpawnAt = now;
+    lastOperationAt = now;
+    return true;
   }
 
   function beginTransformSession(mesh, hitA, hitB, palmA, palmB, now) {
     if (!mesh || !hitA || !hitB || !palmA || !palmB) return false;
 
     const span = Math.max(MIN_TRANSFORM_SPAN, planarDistance(hitA, hitB));
-    const midpoint = hitA.clone().lerp(hitB, 0.5);
-    const startAngle = Math.atan2(hitB.z - hitA.z, hitB.x - hitA.x);
-    const axisSpan = handAxisSpan(palmA, palmB);
     const startingScale = {
       x: clamp(mesh.scale.x || 1, MIN_MESH_SCALE, MAX_MESH_SCALE),
       y: clamp(mesh.scale.y || 1, MIN_MESH_SCALE, MAX_MESH_SCALE),
@@ -166,26 +257,37 @@ export function bootstrapApp() {
       mesh,
       startSpan: span,
       startScale: startingScale,
-      startAxisSpan: axisSpan,
-      startAngle,
-      startRotationY: mesh.rotation.y,
-      startMidpoint: midpoint.clone(),
-      startPosition: mesh.position.clone(),
     };
     selectionRing.userData.pulseStartAt = now;
-    setStatus("Transform locked: horizontal spread changes width, vertical spread changes length", "ok");
+    setStatus("Transform locked: keep both hands visible and spread to resize", "ok");
+    return true;
+  }
+
+  function beginRotationSession(mesh, startAngle, now) {
+    if (!mesh || !Number.isFinite(startAngle)) return false;
+
+    setActiveMesh(mesh);
+    rotationSession = {
+      mesh,
+      startPointerAngle: startAngle,
+      startRotationY: mesh.rotation.y,
+    };
+    selectionRing.userData.pulseStartAt = now;
+    setStatus("Rotation locked: point to turn object", "ok");
     return true;
   }
 
   function endTransformSession(statusMsg = "Transform released") {
     if (!transformSession && !activeMesh) return;
     transformSession = null;
+    rotationSession = null;
     setActiveMesh(null);
     setStatus(statusMsg, "idle");
   }
 
   function updateSelectionFeedback(now) {
-    if (!transformSession?.mesh || activeMesh !== transformSession.mesh) {
+    const focusMesh = rotationSession?.mesh || transformSession?.mesh;
+    if (!focusMesh || activeMesh !== focusMesh) {
       selectionRing.visible = false;
       rotationGuide.visible = false;
       return;
@@ -203,7 +305,17 @@ export function bootstrapApp() {
     selectionRing.scale.setScalar(scale);
     selectionRing.material.opacity = 0.46 + entryBoost * 0.28 + (idlePulse - 1) * 1.8;
 
-    rotationGuide.visible = false;
+    if (rotationSession?.mesh === activeMesh) {
+      const guideLength = Math.max(0.9, meshSelectionRadius(activeMesh) * 0.85);
+      rotationGuide.position.set(activeMesh.position.x, 0.06, activeMesh.position.z);
+      rotationGuide.setDirection(
+        new THREE.Vector3(Math.cos(activeMesh.rotation.y), 0, Math.sin(activeMesh.rotation.y)).normalize()
+      );
+      rotationGuide.setLength(guideLength, 0.18, 0.11);
+      rotationGuide.visible = true;
+    } else {
+      rotationGuide.visible = false;
+    }
   }
 
   function snapValue(v) {
@@ -297,16 +409,6 @@ export function bootstrapApp() {
     return overlayHandStates;
   }
 
-  function handAxisSpan(a, b) {
-    if (!a || !b) {
-      return { x: MIN_HAND_AXIS_SPAN, y: MIN_HAND_AXIS_SPAN };
-    }
-    return {
-      x: Math.max(MIN_HAND_AXIS_SPAN, Math.abs(a.x - b.x)),
-      y: Math.max(MIN_HAND_AXIS_SPAN, Math.abs(a.y - b.y)),
-    };
-  }
-
   function palmCenterLandmark(hand) {
     if (!hand) return null;
     const sum = { x: 0, y: 0, z: 0 };
@@ -375,6 +477,52 @@ export function bootstrapApp() {
     return best;
   }
 
+  function pickReachableMesh(hitPoint, maxDist = 1.5, reachPadding = 0) {
+    if (!hitPoint) return null;
+
+    let best = null;
+    let bestDist = Infinity;
+    for (const mesh of placedMeshes) {
+      const reach = Math.min(maxDist, Math.max(0.5, meshSelectionRadius(mesh) + reachPadding));
+      const d = planarDistance(mesh.position, hitPoint);
+      if (d < bestDist && d <= reach) {
+        best = mesh;
+        bestDist = d;
+      }
+    }
+    return best;
+  }
+
+  function pickDeleteTarget(hitPoint) {
+    return pickReachableMesh(hitPoint, 1.2, -0.18);
+  }
+
+  function pickRotationTarget(pointerHit, fallbackHit) {
+    const preferredHit = pointerHit || fallbackHit;
+    if (
+      activeMesh &&
+      preferredHit &&
+      planarDistance(activeMesh.position, preferredHit) <= Math.max(0.72, meshSelectionRadius(activeMesh) + 0.12)
+    ) {
+      return activeMesh;
+    }
+    return pickReachableMesh(pointerHit, 1.9, 0.12) || pickReachableMesh(fallbackHit, 1.6, 0.08);
+  }
+
+  function shortestAngleDelta(from, to) {
+    return Math.atan2(Math.sin(to - from), Math.cos(to - from));
+  }
+
+  function twoHandRotationAngle(indexHitA, indexHitB, handA, handB) {
+    if (indexHitA && indexHitB) {
+      return Math.atan2(indexHitB.z - indexHitA.z, indexHitB.x - indexHitA.x);
+    }
+    if (handA && handB) {
+      return Math.atan2(handB[8].y - handA[8].y, handA[8].x - handB[8].x);
+    }
+    return 0;
+  }
+
   function pickMeshForTransform(hitA, hitB) {
     if (!hitA || !hitB) return null;
 
@@ -401,7 +549,7 @@ export function bootstrapApp() {
       const oppositionDot = ((vecAX * vecBX) + (vecAZ * vecBZ)) / (lenA * lenB);
       if (oppositionDot > TRANSFORM_OPPOSITION_DOT_MAX) continue;
 
-      const score = dA + dB + midpointDist * 0.9 + (oppositionDot + 1) * 0.35;
+      const score = dA + dB + midpointDist * 0.9 + (oppositionDot + 1) * 0.35 - (mesh === activeMesh ? 0.18 : 0);
       if (score < bestScore) {
         best = mesh;
         bestScore = score;
@@ -470,7 +618,7 @@ export function bootstrapApp() {
       const td = lmkDist(hand[tips[i]], wrist);
       const pd = lmkDist(hand[pips[i]], wrist);
       const md = lmkDist(hand[mcps[i]], wrist);
-      if (td <= Math.max(pd, md) * 0.98) curledCount += 1;
+      if (td <= Math.max(pd, md) * 1.02) curledCount += 1;
     }
 
     // 2b) Fingertips must be drawn inward toward palm center (not semi-open)
@@ -495,14 +643,14 @@ export function bootstrapApp() {
 
     // 3) Thumb should also be tucked (tip close to palm)
     const thumbToPalm = lmkDist(hand[4], palmCenter) / scale;
-    const thumbTucked = (lmkDist(hand[4], wrist) / scale) < 1.18 && thumbToPalm < 0.92;
+    const thumbTucked = (lmkDist(hand[4], wrist) / scale) < 1.24 && thumbToPalm < 0.98;
 
-    // strict closed-fist gate
+    // Slightly relaxed closed-fist gate so delete doesn't require a perfect fist.
     return (
-      avgTipToWrist < 1.08 &&
-      avgTipToPalm < 0.88 &&
-      curledCount >= 4 &&
-      foldedSilhouetteCount >= 3 &&
+      avgTipToWrist < 1.14 &&
+      avgTipToPalm < 0.95 &&
+      curledCount >= 3 &&
+      foldedSilhouetteCount >= 2 &&
       thumbTucked
     );
   }
@@ -546,9 +694,91 @@ export function bootstrapApp() {
     return thumbExtended && curledCount >= 3 && thumbAbovePalm && thumbAboveFingers;
   }
 
+  function isThumbsDownPose(hand) {
+    if (!hand) return false;
+    const scale = palmScale(hand);
+    const wrist = hand[0];
+    const palmCenter = {
+      x: (hand[0].x + hand[5].x + hand[9].x + hand[13].x + hand[17].x) / 5,
+      y: (hand[0].y + hand[5].y + hand[9].y + hand[13].y + hand[17].y) / 5,
+      z: (hand[0].z + hand[5].z + hand[9].z + hand[13].z + hand[17].z) / 5,
+    };
+    const tips = [8, 12, 16, 20];
+    const pips = [6, 10, 14, 18];
+    const mcps = [5, 9, 13, 17];
+
+    let curledCount = 0;
+    for (let i = 0; i < tips.length; i += 1) {
+      const tip = hand[tips[i]];
+      const tipToPalm = lmkDist(tip, palmCenter) / scale;
+      const tipToWrist = lmkDist(tip, wrist);
+      const pipToWrist = lmkDist(hand[pips[i]], wrist);
+      const mcpToWrist = lmkDist(hand[mcps[i]], wrist);
+      if (tipToPalm < 0.98 && tipToWrist <= Math.max(pipToWrist, mcpToWrist) * 1.06) {
+        curledCount += 1;
+      }
+    }
+
+    const thumbTip = hand[4];
+    const thumbIp = hand[3];
+    const thumbMcp = hand[2];
+    const thumbExtended =
+      (lmkDist(thumbTip, wrist) / scale) > 1.32 &&
+      (lmkDist(thumbTip, palmCenter) / scale) > 1.04 &&
+      (lmkDist(thumbTip, thumbMcp) / scale) > 0.48 &&
+      lmkDist(thumbTip, wrist) > lmkDist(thumbIp, wrist) * 1.05;
+    const thumbBelowPalm = thumbTip.y > palmCenter.y + 0.025;
+    const thumbBelowFingers = thumbTip.y > (Math.max(...tips.map((idx) => hand[idx].y)) + 0.01);
+
+    return thumbExtended && curledCount >= 3 && thumbBelowPalm && thumbBelowFingers;
+  }
+
+  function isPointPose(hand) {
+    if (!hand) return false;
+    const scale = palmScale(hand);
+    const wrist = hand[0];
+    const palmCenter = {
+      x: (hand[0].x + hand[5].x + hand[9].x + hand[13].x + hand[17].x) / 5,
+      y: (hand[0].y + hand[5].y + hand[9].y + hand[13].y + hand[17].y) / 5,
+      z: (hand[0].z + hand[5].z + hand[9].z + hand[13].z + hand[17].z) / 5,
+    };
+    const curledTips = [12, 16, 20];
+    const curledPips = [10, 14, 18];
+    const curledMcps = [9, 13, 17];
+
+    let curledCount = 0;
+    for (let i = 0; i < curledTips.length; i += 1) {
+      const tip = hand[curledTips[i]];
+      const tipToPalm = lmkDist(tip, palmCenter) / scale;
+      const tipToWrist = lmkDist(tip, wrist);
+      const pipToWrist = lmkDist(hand[curledPips[i]], wrist);
+      const mcpToWrist = lmkDist(hand[curledMcps[i]], wrist);
+      if (tipToPalm < 1 && tipToWrist <= Math.max(pipToWrist, mcpToWrist) * 1.06) {
+        curledCount += 1;
+      }
+    }
+
+    const indexTip = hand[8];
+    const indexPip = hand[6];
+    const indexMcp = hand[5];
+    const indexExtended =
+      (lmkDist(indexTip, palmCenter) / scale) > 1.08 &&
+      (lmkDist(indexTip, wrist) / scale) > 1.42 &&
+      lmkDist(indexTip, wrist) > lmkDist(indexPip, wrist) * 1.12 &&
+      indexTip.y < indexPip.y - 0.03 &&
+      indexTip.y < indexMcp.y - 0.06;
+
+    const thumbTip = hand[4];
+    const thumbRelaxed = (lmkDist(thumbTip, palmCenter) / scale) < 1.2;
+
+    return indexExtended && curledCount >= 3 && thumbRelaxed;
+  }
+
   function classifySignal(primary, interaction) {
     if (!primary || !interaction?.handsDetected) return null;
-    if (isFistPose(primary)) return SIGNALS.FIST_DELETE;
+    if (interaction.mode === "spawn" && interaction.deleteCandidate && isFistPose(primary)) {
+      return SIGNALS.FIST_DELETE;
+    }
     return null;
   }
 
@@ -557,8 +787,150 @@ export function bootstrapApp() {
     statusEl.dataset.state = state;
   }
 
-  function fmt(n) {
-    return Number.isFinite(n) ? Number(n).toFixed(2) : "0.00";
+  function objectLabelForIndex(index) {
+    let value = Math.max(0, index);
+    let label = "";
+    do {
+      label = String.fromCharCode(65 + (value % 26)) + label;
+      value = Math.floor(value / 26) - 1;
+    } while (value >= 0);
+    return label;
+  }
+
+  function ensureMeshIdentity(mesh) {
+    if (!mesh) return null;
+    if (!mesh.userData.objectSerial) {
+      nextObjectSerial += 1;
+      mesh.userData.objectSerial = nextObjectSerial;
+    } else {
+      nextObjectSerial = Math.max(nextObjectSerial, Number(mesh.userData.objectSerial) || 0);
+    }
+    if (!mesh.userData.label) {
+      mesh.userData.label = objectLabelForIndex((Number(mesh.userData.objectSerial) || 1) - 1);
+    }
+    if (!mesh.userData.shape) mesh.userData.shape = "cube";
+    return mesh.userData.objectSerial;
+  }
+
+  function colorHex(mesh) {
+    return mesh?.material?.color ? `#${mesh.material.color.getHexString()}` : "#7cf7e4";
+  }
+
+  function buildObjectEditorValue(mesh) {
+    return `shape=${mesh.userData?.shape || "cube"} color=${colorHex(mesh)}`;
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll("\"", "&quot;");
+  }
+
+  function normalizeColorValue(colorValue) {
+    const normalized = new THREE.Color(colorValue);
+    return `#${normalized.getHexString()}`;
+  }
+
+  function applyMeshAppearance(mesh, nextShape, nextColor) {
+    if (!mesh) return false;
+
+    const shape = SHAPE_OPTIONS.includes(nextShape) ? nextShape : (mesh.userData?.shape || "cube");
+    let color;
+    try {
+      color = normalizeColorValue(nextColor || colorHex(mesh));
+    } catch {
+      color = colorHex(mesh);
+    }
+
+    const tempMesh = world.buildMesh(shape, Number(mesh.userData.baseSize || 1), color);
+    const oldGeometry = mesh.geometry;
+    const oldMaterial = mesh.material;
+
+    mesh.geometry = tempMesh.geometry;
+    mesh.material = tempMesh.material;
+    mesh.userData.shape = shape;
+    mesh.userData.baseEmissive = mesh.material.emissive.getHex();
+    alignMeshToGround(mesh);
+    updateMeshMetadata(mesh);
+    updateGeometryMetrics(
+      shape,
+      Number(mesh.userData.baseSize || sizeInputEl?.value || 1) *
+        ((Math.abs(mesh.scale.x || 1) + Math.abs(mesh.scale.y || 1) + Math.abs(mesh.scale.z || 1)) / 3)
+    );
+
+    oldGeometry?.dispose?.();
+    oldMaterial?.dispose?.();
+    if (mesh === activeMesh && mesh.material?.emissive) {
+      mesh.material.emissive.setHex(0x2ccbd3);
+    }
+    return true;
+  }
+
+  function alignMeshToGround(mesh) {
+    if (!mesh?.geometry) return;
+    mesh.geometry.computeBoundingBox?.();
+    const bbox = mesh.geometry.boundingBox;
+    if (!bbox) return;
+    const halfHeight = (bbox.max.y - bbox.min.y) * Math.abs(mesh.scale.y || 1) * 0.5;
+    mesh.position.y = halfHeight;
+  }
+
+  function parseObjectEditorValue(rawValue, mesh) {
+    const currentShape = mesh.userData?.shape || "cube";
+    const currentColor = colorHex(mesh);
+    const text = String(rawValue || "").trim();
+    const shapeMatch =
+      text.match(/shape\s*[:=]\s*(cube|cuboid|sphere|cylinder)/i) ||
+      text.match(/\b(cube|cuboid|sphere|cylinder)\b/i);
+    const hexMatch = text.match(/#[0-9a-f]{3,8}\b/i);
+    const colorMatch = text.match(/color\s*[:=]\s*([^\s,;]+)/i);
+    const nextShape = shapeMatch ? shapeMatch[1].toLowerCase() : currentShape;
+    const nextColorToken = hexMatch?.[0] || colorMatch?.[1] || currentColor;
+
+    return {
+      hasShape: Boolean(shapeMatch),
+      hasColor: Boolean(hexMatch || colorMatch),
+      nextShape,
+      nextColorToken,
+      text,
+    };
+  }
+
+  function applyObjectEditorValue(objectSerial, rawValue) {
+    const mesh = placedMeshes.find((item) => Number(item.userData?.objectSerial) === Number(objectSerial));
+    if (!mesh) return false;
+
+    const parsed = parseObjectEditorValue(rawValue, mesh);
+    if (!parsed.hasShape && !parsed.hasColor) {
+      setStatus("Type a shape and/or color, for example: shape=sphere color=#ff9d5c", "error");
+      renderObjectList();
+      return false;
+    }
+
+    try {
+      applyMeshAppearance(mesh, parsed.nextShape, parsed.nextColorToken);
+      if (
+        (transformSession?.mesh && transformSession.mesh !== mesh) ||
+        (rotationSession?.mesh && rotationSession.mesh !== mesh)
+      ) {
+        transformSession = null;
+        rotationSession = null;
+        pendingTransformCandidate = null;
+        pendingTransformSince = null;
+        transformMissingHandSince = null;
+      }
+      setActiveMesh(mesh);
+      setStatus(`Updated ${mesh.userData.label}: ${parsed.nextShape} ${colorHex(mesh)}`, "ok");
+      renderObjectList();
+      refreshDebug();
+      return true;
+    } catch (error) {
+      setStatus(`Could not parse object edit: ${error?.message || error}`, "error");
+      renderObjectList();
+      return false;
+    }
   }
 
   function renderObjectList() {
@@ -566,24 +938,32 @@ export function bootstrapApp() {
 
     objectCountEl.textContent = String(placedMeshes.length);
     if (!placedMeshes.length) {
-      objectListEl.innerHTML = `<div class="object-meta">No objects placed yet.</div>`;
+      objectListEl.innerHTML = `<div class="object-empty">Place an object to start an editable list, then type updates like <code>shape=sphere color=#ff8c64</code>.</div>`;
       return;
     }
 
-    objectListEl.innerHTML = placedMeshes.map((mesh, idx) => {
-      const shape = mesh.userData?.shape || "mesh";
-      const pos = mesh.position || { x: 0, y: 0, z: 0 };
-      const scale = mesh.scale || { x: 1, y: 1, z: 1 };
+    objectListEl.innerHTML = placedMeshes.map((mesh) => {
+      ensureMeshIdentity(mesh);
+      const label = mesh.userData.label;
+      const shape = mesh.userData?.shape || "cube";
+      const color = colorHex(mesh);
       return `
-        <article class="object-item">
-          <div class="object-title">
-            <strong>${idx + 1}. ${shape}</strong>
-            <span>${mesh === activeMesh ? "active" : ""}</span>
+        <article class="object-item${mesh === activeMesh ? " is-active" : ""}" data-object-serial="${mesh.userData.objectSerial}">
+          <div class="object-item-head">
+            <span class="object-swatch" style="--swatch:${escapeHtml(color)}"></span>
+            <strong class="object-label">${escapeHtml(label)}</strong>
+            <span class="object-state">${mesh === activeMesh ? "active" : shape}</span>
           </div>
-          <div class="object-meta">
-            pos: (${fmt(pos.x)}, ${fmt(pos.y)}, ${fmt(pos.z)})<br/>
-            scale: (${fmt(scale.x)}, ${fmt(scale.y)}, ${fmt(scale.z)})
-          </div>
+          <label class="object-expression">
+            <span class="object-equals">=</span>
+            <input
+              class="object-editor"
+              type="text"
+              spellcheck="false"
+              data-object-serial="${mesh.userData.objectSerial}"
+              value="${escapeHtml(buildObjectEditorValue(mesh))}"
+            />
+          </label>
         </article>
       `;
     }).join("");
@@ -762,9 +1142,10 @@ export function bootstrapApp() {
   }
 
   function drawTransformLockBadge() {
-    if (!transformSession?.mesh || activeMesh !== transformSession.mesh) return;
+    const lockedMesh = rotationSession?.mesh || transformSession?.mesh;
+    if (!lockedMesh || activeMesh !== lockedMesh) return;
 
-    const worldPos = transformSession.mesh.position.clone();
+    const worldPos = lockedMesh.position.clone();
     worldPos.y += 0.65;
     const ndc = worldPos.project(world.camera);
 
@@ -812,7 +1193,6 @@ export function bootstrapApp() {
         step: Number(gridStepInputEl.value),
         transformMode: transformSnapModeEl.value,
         rotationStepDeg: Number(rotationStepInputEl.value),
-        lockMode: transformLockModeEl.value,
       },
       shape: appState.shape,
       dimension: Number(appState.dimension.toFixed(3)),
@@ -846,6 +1226,7 @@ export function bootstrapApp() {
     while (placedMeshes.length > MAX_MESHES) {
       const old = placedMeshes.shift();
       if (transformSession?.mesh === old) transformSession = null;
+      if (rotationSession?.mesh === old) rotationSession = null;
       removeMesh(old);
       if (activeMesh === old) setActiveMesh(null);
     }
@@ -856,6 +1237,7 @@ export function bootstrapApp() {
     const mesh = placedMeshes.pop();
     if (!mesh) return;
     if (transformSession?.mesh === mesh) transformSession = null;
+    if (rotationSession?.mesh === mesh) rotationSession = null;
     removeMesh(mesh);
     if (activeMesh === mesh) setActiveMesh(null);
     setStatus(`Undid one shape. Remaining ${placedMeshes.length}`, "ok");
@@ -865,11 +1247,12 @@ export function bootstrapApp() {
 
   function deleteNearestToPalm(palmHit) {
     if (!palmHit) return false;
-    const target = pickNearestMesh(palmHit, Infinity);
+    const target = pickDeleteTarget(palmHit);
     if (!target) return false;
     const idx = placedMeshes.indexOf(target);
     if (idx >= 0) placedMeshes.splice(idx, 1);
     if (transformSession?.mesh === target) transformSession = null;
+    if (rotationSession?.mesh === target) rotationSession = null;
     if (target === activeMesh) setActiveMesh(null);
     removeMesh(target);
     setStatus("Deleted nearest object to palm", "ok");
@@ -879,6 +1262,9 @@ export function bootstrapApp() {
 
   function clearAll() {
     transformSession = null;
+    rotationSession = null;
+    nextObjectSerial = 0;
+    disposePlacementPreview();
     while (placedMeshes.length) removeMesh(placedMeshes.pop());
     setActiveMesh(null);
     setStatus("Cleared scene", "idle");
@@ -888,6 +1274,8 @@ export function bootstrapApp() {
 
   function serializeScene() {
     return placedMeshes.map((m) => ({
+      label: m.userData.label || null,
+      objectSerial: m.userData.objectSerial || null,
       shape: m.userData.shape || "cube",
       baseSize: m.userData.baseSize || 1,
       color: `#${m.material.color.getHexString()}`,
@@ -916,8 +1304,11 @@ export function bootstrapApp() {
       mesh.position.fromArray(item.position || [0, 0.5, 0]);
       mesh.rotation.y = Number(item.rotationY || 0);
       if (Array.isArray(item.scale)) mesh.scale.fromArray(item.scale);
+      if (item.objectSerial) mesh.userData.objectSerial = Number(item.objectSerial);
+      if (item.label) mesh.userData.label = item.label;
       mesh.userData.shape = item.shape || "cube";
       mesh.userData.baseSize = Number(item.baseSize || 1);
+      ensureMeshIdentity(mesh);
       updateMeshMetadata(mesh);
       world.scene.add(mesh);
       placedMeshes.push(mesh);
@@ -955,64 +1346,97 @@ export function bootstrapApp() {
       const secondary = hands[1] || null;
       const handCount = hands.length;
       const baseInteraction = pipeline.update(primary, secondary);
-      const detectedMode = handCount >= 2 ? "transform" : "spawn";
-
-      const rawSignal = handCount === 1
-        ? classifySignal(primary, { ...baseInteraction, handsDetected: handCount > 0 })
-        : null;
-      if (rawSignal === SIGNALS.FIST_DELETE) {
-        if (fistHoldStartAt == null) fistHoldStartAt = now;
-      } else {
-        fistHoldStartAt = null;
-      }
-
-      const signal = (fistHoldStartAt != null && (now - fistHoldStartAt) >= FIST_HOLD_MS)
-        ? SIGNALS.FIST_DELETE
-        : null;
-
+      const autoMode = handCount >= 2 ? "transform" : "spawn";
       const primaryPalm = primary ? palmCenterLandmark(primary) : null;
       const secondaryPalm = secondary ? palmCenterLandmark(secondary) : null;
       const primaryPalmHitRaw = primaryPalm ? world.projectToGround(primaryPalm) : null;
       const secondaryPalmHitRaw = secondaryPalm ? world.projectToGround(secondaryPalm) : null;
       const pinchContact = primary ? midpointLandmark(primary[4], primary[8]) : null;
       const pinchHitRaw = pinchContact ? world.projectToGround(pinchContact) : null;
+      const primaryIndexHitRaw = primary?.[8] ? world.projectToGround(primary[8]) : null;
+      const secondaryIndexHitRaw = secondary?.[8] ? world.projectToGround(secondary[8]) : null;
 
       smoothedPalm = smoothPoint(smoothedPalm, primaryPalmHitRaw, 0.24);
       smoothedSecondaryPalm = smoothPoint(smoothedSecondaryPalm, secondaryPalmHitRaw, 0.24);
       smoothedPinch = smoothPoint(smoothedPinch, pinchHitRaw, 0.3);
+      smoothedPrimaryIndex = smoothPoint(smoothedPrimaryIndex, primaryIndexHitRaw, 0.22);
+      smoothedSecondaryIndex = smoothPoint(smoothedSecondaryIndex, secondaryIndexHitRaw, 0.22);
 
       const primaryPalmHit = primaryPalmHitRaw || smoothedPalm;
       const secondaryPalmHit = secondaryPalmHitRaw || smoothedSecondaryPalm;
       const pinchHit = pinchHitRaw || smoothedPinch;
+      const primaryIndexHit = primaryIndexHitRaw || smoothedPrimaryIndex;
+      const secondaryIndexHit = secondaryIndexHitRaw || smoothedSecondaryIndex;
+      const palmMidpoint = primaryPalmHit && secondaryPalmHit
+        ? primaryPalmHit.clone().lerp(secondaryPalmHit, 0.5)
+        : primaryPalmHit;
+      const indexMidpoint = primaryIndexHit && secondaryIndexHit
+        ? primaryIndexHit.clone().lerp(secondaryIndexHit, 0.5)
+        : primaryIndexHit;
+      const deleteTarget = autoMode === "spawn" ? pickDeleteTarget(primaryPalmHit) : null;
+      const thumbsUpPose = autoMode === "spawn" && primary ? isThumbsUpPose(primary) : false;
+      const thumbsDownPose = autoMode === "spawn" && primary ? isThumbsDownPose(primary) : false;
+      const twoHandPointPose = autoMode === "transform" && primary && secondary
+        ? isPointPose(primary) && isPointPose(secondary)
+        : false;
+      const rawSignal = autoMode === "spawn" && primary
+        ? classifySignal(primary, {
+          ...baseInteraction,
+          handsDetected: handCount > 0,
+          mode: "spawn",
+          pointPose: false,
+          deleteCandidate: deleteTarget,
+        })
+        : (twoHandPointPose ? SIGNALS.POINT_ROTATE : null);
+      if (rawSignal === SIGNALS.FIST_DELETE) {
+        if (fistHoldStartAt == null) fistHoldStartAt = now;
+      } else {
+        fistHoldStartAt = null;
+      }
+
+      const signal = rawSignal === SIGNALS.FIST_DELETE
+        ? ((fistHoldStartAt != null && (now - fistHoldStartAt) >= FIST_HOLD_MS) ? SIGNALS.FIST_DELETE : null)
+        : rawSignal;
       const transformDistance = handCount >= 2 && primaryPalmHit && secondaryPalmHit
         ? planarDistance(primaryPalmHit, secondaryPalmHit)
         : 0;
-      const thumbsUpRelease = Boolean(transformSession) && [primary, secondary].some(
+      const thumbsUpRelease = Boolean(transformSession || rotationSession) && [primary, secondary].some(
         (hand) => hand && isThumbsUpPose(hand)
       );
-      const lockMode = transformLockModeEl.value || "hold";
+      const pointActive = signal === SIGNALS.POINT_ROTATE;
       let transformEndedThisFrame = false;
+      let handReturnThisFrame = false;
 
-      if (thumbsUpRelease && transformSession) {
+      if (thumbsUpRelease && (transformSession || rotationSession)) {
         endTransformSession("Transform ended");
         pendingTransformCandidate = null;
         pendingTransformSince = null;
+        transformMissingHandSince = null;
         transformEndedThisFrame = true;
-      } else if (transformSession && handCount < 2 && lockMode !== "sticky") {
-        endTransformSession("Transform released");
-        pendingTransformCandidate = null;
-        pendingTransformSince = null;
-        transformEndedThisFrame = true;
+      } else if (transformSession || rotationSession) {
+        if (handCount < 2) {
+          if (transformMissingHandSince == null) transformMissingHandSince = now;
+          if ((now - transformMissingHandSince) >= TRANSFORM_HAND_RETURN_MS) {
+            endTransformSession("Transform released");
+            pendingTransformCandidate = null;
+            pendingTransformSince = null;
+            transformMissingHandSince = null;
+            transformEndedThisFrame = true;
+          }
+        } else {
+          handReturnThisFrame = transformMissingHandSince != null;
+          transformMissingHandSince = null;
+        }
       }
+      const transformPausedForMissingHand = Boolean((transformSession || rotationSession) && handCount < 2 && !transformEndedThisFrame);
 
       const interaction = {
         ...baseInteraction,
         handsDetected: handCount > 0,
         handCount,
-        mode: transformSession ? "transform" : detectedMode,
+        mode: transformPausedForMissingHand ? "transform" : autoMode,
+        pointPose: twoHandPointPose,
       };
-
-      if (gestureModeEl) gestureModeEl.value = interaction.mode;
 
       drawDebug(hands, interaction);
       appState.interaction = {
@@ -1020,29 +1444,13 @@ export function bootstrapApp() {
         signal,
         transformDistance,
         thumbsUp: thumbsUpRelease,
-        transformActive: Boolean(transformSession),
+        transformActive: Boolean(transformSession || rotationSession),
       };
-
-      if (!interaction.handsDetected) {
-        setIntent("waiting for hands", "idle");
-      } else if (transformEndedThisFrame && thumbsUpRelease) {
-        setIntent("ending transform", "ok");
-      } else if (transformSession) {
-        setIntent(handCount >= 2 ? "scaling selected object" : "transform locked", "ok");
-      } else if (detectedMode === "transform") {
-        setIntent("align hands around object", "idle");
-      } else if (signal === SIGNALS.FIST_DELETE) {
-        setIntent("fist delete", "ok");
-      } else if (interaction.pinch) {
-        setIntent("placing shape", "ok");
-      } else {
-        setIntent("ready to place", "idle");
-      }
 
       const dynamicAlpha = Math.max(0.16, Math.min(0.62, 0.55 - interaction.jitter * 2.2));
       pipeline.setAlpha(dynamicAlpha);
 
-      if (!transformSession && !transformEndedThisFrame && detectedMode === "spawn" && primary) {
+      if (autoMode === "spawn" && primary && !transformEndedThisFrame && !transformPausedForMissingHand) {
         const pinchActive = interaction.pinch && signal !== SIGNALS.FIST_DELETE;
         const pinchStart = pinchActive && !prevPinch;
         const pulseRadius = pinchPulseRadius(interaction.pinchStrength || 0);
@@ -1051,28 +1459,22 @@ export function bootstrapApp() {
         const canSpawn = now - lastSpawnAt >= SPAWN_COOLDOWN_MS;
         const canOperate = now - lastOperationAt >= OPERATION_COOLDOWN_MS;
 
-        const shouldSpawn = canOperate && canSpawn && pinchHit && (pinchStart || placementPulseTrigger);
-        if (shouldSpawn) {
-          const mesh = world.buildMesh(shapeTypeEl.value, Number(sizeInputEl.value), colorInputEl.value);
-          mesh.position.x = shouldSnapPosition() ? snapValue(pinchHit.x) : pinchHit.x;
-          mesh.position.z = shouldSnapPosition() ? snapValue(pinchHit.z) : pinchHit.z;
-          mesh.rotation.y = snapRotation(Math.random() * Math.PI);
-          mesh.userData.shape = shapeTypeEl.value;
-          mesh.userData.baseSize = Number(sizeInputEl.value);
-          updateMeshMetadata(mesh);
-          world.scene.add(mesh);
-          placedMeshes.push(mesh);
-          enforceMeshBudget();
-          updateGeometryMetrics(mesh.userData.shape, mesh.userData.baseSize);
-          renderObjectList();
-          setStatus(`Placed ${shapeTypeEl.value}`, "ok");
-          lastSpawnAt = now;
-          lastOperationAt = now;
+        const shouldPreview = canSpawn && pinchHit && (pinchStart || placementPulseTrigger || placementPreview);
+        if (shouldPreview && pinchHit) {
+          ensurePlacementPreview(pinchHit);
+        }
+
+        if (placementPreview && thumbsDownPose) {
+          disposePlacementPreview();
+          setStatus("Placement cancelled", "idle");
+        } else if (placementPreview && thumbsUpPose && canOperate) {
+          confirmPlacementPreview(now);
         }
 
         const canDeleteWithFist =
           signal === SIGNALS.FIST_DELETE &&
-          primaryPalmHit &&
+          !placementPreview &&
+          deleteTarget &&
           now - lastOperationAt >= OPERATION_COOLDOWN_MS &&
           now - lastFistDeleteAt >= FIST_DELETE_COOLDOWN_MS;
         if (canDeleteWithFist && deleteNearestToPalm(primaryPalmHit)) {
@@ -1080,54 +1482,150 @@ export function bootstrapApp() {
           lastOperationAt = now;
         }
 
+        rotationSession = null;
+        pendingTransformCandidate = null;
+        pendingTransformSince = null;
         prevPlacementPulseActive = placementPulseActive;
         prevPinch = pinchActive;
-      } else if (!transformEndedThisFrame && handCount >= 2) {
+        prevPointPose = false;
+      } else if (autoMode === "transform" && !transformEndedThisFrame) {
+        if (placementPreview) {
+          disposePlacementPreview();
+        }
         fistHoldStartAt = null;
         prevPlacementPulseActive = false;
-        prevPinch = interaction.pinch;
+        prevPinch = false;
+        transformMissingHandSince = null;
 
-        if (!transformSession && primaryPalmHit && secondaryPalmHit && primaryPalm && secondaryPalm) {
-          const candidate = pickMeshForTransform(primaryPalmHit, secondaryPalmHit);
-          const canLock = updatePendingTransformCandidate(candidate, now);
-          if (candidate && canLock) {
-            beginTransformSession(candidate, primaryPalmHit, secondaryPalmHit, primaryPalm, secondaryPalm, now);
+        if (pointActive && primary && secondary) {
+          pendingTransformCandidate = null;
+          pendingTransformSince = null;
+          const rotationAngle = twoHandRotationAngle(primaryIndexHit, secondaryIndexHit, primary, secondary);
+          const target = (!rotationSession?.mesh || !prevPointPose)
+            ? pickRotationTarget(indexMidpoint, palmMidpoint)
+            : rotationSession.mesh;
+          if (target && (!rotationSession?.mesh || !prevPointPose)) {
+            beginRotationSession(target, rotationAngle, now);
+          }
+          if (rotationSession?.mesh && Number.isFinite(rotationAngle)) {
+            const delta = shortestAngleDelta(rotationSession.startPointerAngle, rotationAngle);
+            const targetRotation = snapRotation(rotationSession.startRotationY + delta);
+            rotationSession.mesh.rotation.y = THREE.MathUtils.lerp(
+              rotationSession.mesh.rotation.y,
+              targetRotation,
+              TRANSFORM_ROTATION_SMOOTHING
+            );
+            selectionRing.position.set(rotationSession.mesh.position.x, 0.02, rotationSession.mesh.position.z);
           }
         } else {
+          if (rotationSession && !transformSession) {
+            setActiveMesh(null);
+          }
+          rotationSession = null;
+        }
+
+        if (!pointActive && handCount >= 2 && primaryPalmHit && secondaryPalmHit && primaryPalm && secondaryPalm) {
+          if (!transformSession) {
+            const candidate = pickMeshForTransform(primaryPalmHit, secondaryPalmHit);
+            const canLock = updatePendingTransformCandidate(candidate, now);
+            if (candidate && canLock) {
+              beginTransformSession(candidate, primaryPalmHit, secondaryPalmHit, primaryPalm, secondaryPalm, now);
+            }
+          } else {
+            pendingTransformCandidate = null;
+            pendingTransformSince = null;
+          }
+        } else if (!pointActive) {
           pendingTransformCandidate = null;
           pendingTransformSince = null;
         }
 
-        if (transformSession?.mesh && primaryPalm && secondaryPalm) {
-          const axisSpan = handAxisSpan(primaryPalm, secondaryPalm);
-          const scaleX = clamp(
-            transformSession.startScale.x * (axisSpan.x / transformSession.startAxisSpan.x),
-            MIN_MESH_SCALE,
-            MAX_MESH_SCALE
-          );
-          const scaleZ = clamp(
-            transformSession.startScale.z * (axisSpan.y / transformSession.startAxisSpan.y),
-            MIN_MESH_SCALE,
-            MAX_MESH_SCALE
-          );
+        if (!pointActive && transformSession?.mesh && primaryPalm && secondaryPalm && primaryPalmHit && secondaryPalmHit) {
+          if (prevPointPose || handReturnThisFrame) {
+            transformSession.startSpan = Math.max(MIN_TRANSFORM_SPAN, planarDistance(primaryPalmHit, secondaryPalmHit));
+            transformSession.startScale = {
+              x: clamp(transformSession.mesh.scale.x || 1, MIN_MESH_SCALE, MAX_MESH_SCALE),
+              y: clamp(transformSession.mesh.scale.y || 1, MIN_MESH_SCALE, MAX_MESH_SCALE),
+              z: clamp(transformSession.mesh.scale.z || 1, MIN_MESH_SCALE, MAX_MESH_SCALE),
+            };
+          }
+          const currentSpan = Math.max(MIN_TRANSFORM_SPAN, planarDistance(primaryPalmHit, secondaryPalmHit));
+          const spanRatio = currentSpan / Math.max(MIN_TRANSFORM_SPAN, transformSession.startSpan || MIN_TRANSFORM_SPAN);
+          const targetScaleX = clamp(transformSession.startScale.x * spanRatio, MIN_MESH_SCALE, MAX_MESH_SCALE);
+          const targetScaleY = clamp(transformSession.startScale.y * spanRatio, MIN_MESH_SCALE, MAX_MESH_SCALE);
+          const targetScaleZ = clamp(transformSession.startScale.z * spanRatio, MIN_MESH_SCALE, MAX_MESH_SCALE);
 
-          transformSession.mesh.scale.set(
-            scaleX,
-            transformSession.startScale.y,
-            scaleZ
+          transformSession.mesh.scale.x = THREE.MathUtils.lerp(
+            transformSession.mesh.scale.x,
+            targetScaleX,
+            TRANSFORM_SCALE_SMOOTHING
           );
+          transformSession.mesh.scale.y = THREE.MathUtils.lerp(
+            transformSession.mesh.scale.y,
+            targetScaleY,
+            TRANSFORM_SCALE_SMOOTHING
+          );
+          transformSession.mesh.scale.z = THREE.MathUtils.lerp(
+            transformSession.mesh.scale.z,
+            targetScaleZ,
+            TRANSFORM_SCALE_SMOOTHING
+          );
+          alignMeshToGround(transformSession.mesh);
           updateMeshMetadata(transformSession.mesh);
           updateGeometryMetrics(
             transformSession.mesh.userData.shape || shapeTypeEl.value,
-            Number(transformSession.mesh.userData.baseSize || sizeInputEl.value) * ((scaleX + scaleZ) * 0.5)
+            Number(transformSession.mesh.userData.baseSize || sizeInputEl.value) *
+              ((transformSession.mesh.scale.x + transformSession.mesh.scale.y + transformSession.mesh.scale.z) / 3)
           );
 
           selectionRing.position.set(transformSession.mesh.position.x, 0.02, transformSession.mesh.position.z);
         }
-      } else if (transformSession) {
+
+        prevPointPose = pointActive;
+      } else if (transformSession || rotationSession) {
         fistHoldStartAt = null;
         prevPlacementPulseActive = false;
         prevPinch = false;
+      }
+
+      if (!interaction.handsDetected) {
+        if (placementPreview) {
+          disposePlacementPreview();
+        }
+        setIntent("waiting for hands", "idle");
+      } else if (transformPausedForMissingHand) {
+        setStatus("Return second hand to camera to continue transform", "idle");
+        setIntent("return second hand to camera", "idle");
+      } else if (transformEndedThisFrame && thumbsUpRelease) {
+        setIntent("ending transform", "ok");
+      } else if (autoMode === "spawn") {
+        if (placementPreview && thumbsUpPose) {
+          setIntent("thumbs up to place", "ok");
+        } else if (placementPreview && thumbsDownPose) {
+          setIntent("thumbs down to cancel", "idle");
+        } else if (placementPreview) {
+          setIntent("preview active: thumbs up to place, thumbs down to cancel", "idle");
+        } else if (signal === SIGNALS.FIST_DELETE) {
+          setIntent("fist delete", "ok");
+        } else if (primary && isFistPose(primary) && !deleteTarget) {
+          setIntent("move closer to an object to delete", "idle");
+        } else if (interaction.pinch) {
+          setIntent("pinch to position preview", "ok");
+        } else {
+          setIntent("ready to place", "idle");
+        }
+      } else if (pointActive && rotationSession?.mesh) {
+        setIntent("rotating selected object", "ok");
+      } else if (pointActive) {
+        setIntent("show both point gestures to rotate", "idle");
+      } else if (transformSession && handCount >= 2) {
+        setIntent("resizing selected object", "ok");
+      } else if (transformSession) {
+        setIntent("transform locked", "ok");
+      } else if (handCount >= 2) {
+        setIntent("use two hands to resize or both point to rotate", "idle");
+      } else {
+        setIntent("ready to place", "idle");
       }
 
       updateSelectionFeedback(now);
@@ -1136,21 +1634,28 @@ export function bootstrapApp() {
 
       if (!primary) {
         prevPinch = false;
+        prevPointPose = false;
         prevPlacementPulseActive = false;
         fistHoldStartAt = null;
         smoothedPalm = null;
         smoothedPinch = null;
+        smoothedPrimaryIndex = null;
         smoothedSecondaryPalm = null;
+        smoothedSecondaryIndex = null;
+        transformMissingHandSince = null;
         overlayHandStates = [];
         pendingTransformCandidate = null;
         pendingTransformSince = null;
+        disposePlacementPreview();
+        if (!transformSession) rotationSession = null;
       } else if (!secondary) {
         smoothedSecondaryPalm = null;
+        smoothedSecondaryIndex = null;
         pendingTransformCandidate = null;
         pendingTransformSince = null;
       }
 
-      appState.interaction.transformActive = Boolean(transformSession);
+      appState.interaction.transformActive = Boolean(transformSession || rotationSession);
     }
 
     rafId = requestAnimationFrame(detectLoop);
@@ -1178,14 +1683,20 @@ export function bootstrapApp() {
     if (stream) stream.getTracks().forEach((t) => t.stop());
     webcamEl.srcObject = null;
     transformSession = null;
+    rotationSession = null;
     setActiveMesh(null);
     prevPinch = false;
+    prevPointPose = false;
     prevPlacementPulseActive = false;
     fistHoldStartAt = null;
     smoothedPalm = null;
     smoothedPinch = null;
+    smoothedPrimaryIndex = null;
     smoothedSecondaryPalm = null;
+    smoothedSecondaryIndex = null;
+    transformMissingHandSince = null;
     overlayHandStates = [];
+    disposePlacementPreview();
     startBtn.disabled = false;
     stopBtn.disabled = true;
     setStatus("Stopped", "idle");
@@ -1225,8 +1736,57 @@ export function bootstrapApp() {
     refreshDebug();
   });
 
+  function applySidebarShapeColorToSelection() {
+    if (!activeMesh) {
+      refreshDebug();
+      return;
+    }
+    applyMeshAppearance(activeMesh, shapeTypeEl.value, colorInputEl.value);
+    renderObjectList();
+    refreshDebug();
+    setStatus(`Updated ${activeMesh.userData.label}`, "ok");
+  }
+
+  shapeTypeEl?.addEventListener("change", applySidebarShapeColorToSelection);
+  colorInputEl?.addEventListener("input", applySidebarShapeColorToSelection);
+  colorInputEl?.addEventListener("change", applySidebarShapeColorToSelection);
+
+  objectListEl?.addEventListener("click", (event) => {
+    if (event.target.closest(".object-editor")) return;
+    const row = event.target.closest(".object-item[data-object-serial]");
+    if (!row) return;
+    const mesh = placedMeshes.find((item) => Number(item.userData?.objectSerial) === Number(row.dataset.objectSerial));
+    if (!mesh) return;
+    if (
+      (transformSession?.mesh && transformSession.mesh !== mesh) ||
+      (rotationSession?.mesh && rotationSession.mesh !== mesh)
+    ) {
+      transformSession = null;
+      rotationSession = null;
+      pendingTransformCandidate = null;
+      pendingTransformSince = null;
+      transformMissingHandSince = null;
+    }
+    setActiveMesh(mesh);
+  });
+
+  objectListEl?.addEventListener("keydown", (event) => {
+    const editor = event.target.closest(".object-editor");
+    if (!editor) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applyObjectEditorValue(editor.dataset.objectSerial, editor.value);
+      editor.blur();
+    }
+  });
+
+  objectListEl?.addEventListener("change", (event) => {
+    const editor = event.target.closest(".object-editor");
+    if (!editor) return;
+    applyObjectEditorValue(editor.dataset.objectSerial, editor.value);
+  });
+
   transformSnapModeEl.addEventListener("change", refreshDebug);
-  transformLockModeEl.addEventListener("change", refreshDebug);
   navigationModeEl?.addEventListener("change", () => {
     if (typeof world.setNavigationMode === "function") {
       world.setNavigationMode(navigationModeEl.value || "blender");

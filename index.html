@@ -107,20 +107,22 @@
               </label>
 
               <label class="field">
+                <span>Default Size</span>
+                <select id="sizeInput">
+                  <option value="0.5">S</option>
+                  <option value="0.9" selected>M</option>
+                  <option value="1.3">L</option>
+                  <option value="1.8">XL</option>
+                </select>
+              </label>
+
+              <label class="field">
                 <span>Transform Snap</span>
                 <select id="transformSnapMode">
                   <option value="off">Off</option>
                   <option value="position">Position</option>
                   <option value="rotation">Rotation</option>
                   <option value="all">All</option>
-                </select>
-              </label>
-
-              <label class="field">
-                <span>Transform Lock</span>
-                <select id="transformLockMode">
-                  <option value="hold">Hold</option>
-                  <option value="sticky">Sticky</option>
                 </select>
               </label>
 
@@ -154,7 +156,7 @@
           <div class="algebra-input">
             <button class="sidebar-plus" type="button" aria-hidden="true" tabindex="-1">+</button>
             <div class="input-entry">
-              <span class="input-placeholder">Input...</span>
+              <span class="input-placeholder">Edit placed objects below...</span>
               <span class="input-cursor" aria-hidden="true"></span>
             </div>
           </div>
@@ -172,24 +174,6 @@
                 <option value="cuboid">Cuboid</option>
                 <option value="sphere">Sphere</option>
                 <option value="cylinder">Cylinder</option>
-              </select>
-            </label>
-
-            <label class="field">
-              <span>Mode (auto)</span>
-              <select id="gestureMode">
-                <option value="spawn">Place/Delete</option>
-                <option value="transform">Transform</option>
-              </select>
-            </label>
-
-            <label class="field">
-              <span>Size</span>
-              <select id="sizeInput">
-                <option value="0.5">S</option>
-                <option value="0.9" selected>M</option>
-                <option value="1.3">L</option>
-                <option value="1.8">XL</option>
               </select>
             </label>
 
