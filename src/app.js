@@ -32,7 +32,6 @@ const VIEW_DRAG_GROUND_LOCK_THRESHOLD = 0.72;
 const LINE_DEPTH_RAY_GAIN = 2.9;
 const LINE_DEPTH_MAX_OFFSET = 9;
 const LINE_DEPTH_DEADZONE = 0.005;
-const LINE_ENDPOINT_SMOOTHING = 0.52;
 const TRANSFORM_SELECT_BUFFER = 0.95;
 const TRANSFORM_MIDPOINT_RADIUS_FACTOR = 1.08;
 const TRANSFORM_OPPOSITION_DOT_MAX = 0.72;
@@ -425,9 +424,7 @@ export function bootstrapApp() {
         placementPreview.lineStartLandmark
       );
       if (nextEndpoint) {
-        placementPreview.lineEndHit = placementPreview.lineEndHit
-          ? placementPreview.lineEndHit.lerp(nextEndpoint, LINE_ENDPOINT_SMOOTHING)
-          : nextEndpoint;
+        placementPreview.lineEndHit = nextEndpoint;
       }
     }
 
@@ -2112,6 +2109,7 @@ export function bootstrapApp() {
       const visualHands = smoothHandsForOverlay(hands);
       const primary = hands[0] || null;
       const secondary = hands[1] || null;
+      const lineToolSelected = shapeTypeEl.value === "line";
       const primaryVisual = visualHands[0]?.landmarks || primary;
       const secondaryVisual = visualHands[1]?.landmarks || secondary;
       const handCount = hands.length;
@@ -2142,9 +2140,10 @@ export function bootstrapApp() {
       const primaryPalmHit = primaryPalmHitRaw || smoothedPalm;
       const secondaryPalmHit = secondaryPalmHitRaw || smoothedSecondaryPalm;
       const pinchHit = pinchHitRaw || smoothedPinch;
-      const pinchPlacement = pinchHit
+      const pinchPlacementPoint = lineToolSelected ? (pinchHitRaw || smoothedPinch) : pinchHit;
+      const pinchPlacement = pinchPlacementPoint
         ? {
-          point: pinchHit,
+          point: pinchPlacementPoint,
           floorLocked: pinchPlacementRaw?.floorLocked ?? (placementPreview?.floorLocked ?? true),
         }
         : null;
