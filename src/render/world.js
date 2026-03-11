@@ -218,6 +218,13 @@ export function createWorld(container) {
     return ok ? { point: fallback, floorLocked: true } : null;
   }
 
+  function pickObjectFromLandmark(landmark, objects = []) {
+    ndc.set((1 - landmark.x) * 2 - 1, -(landmark.y * 2 - 1));
+    raycaster.setFromCamera(ndc, camera);
+    const intersections = raycaster.intersectObjects(objects, false);
+    return intersections[0] || null;
+  }
+
   function setRayFromClient(clientX, clientY) {
     const rect = renderer.domElement.getBoundingClientRect();
     const x = ((clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1;
@@ -378,6 +385,7 @@ export function createWorld(container) {
     renderer,
     projectToGround,
     projectToPlacement,
+    pickObjectFromLandmark,
     getViewTarget,
     projectClientToPlane,
     projectClientToPlacement,

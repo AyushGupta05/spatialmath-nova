@@ -14,9 +14,11 @@ const HAND_CONNECTIONS = [
 ];
 const SHOW_HAND_MARKERS = true;
 const HAND_OVERLAY_SCALE = 0.88;
-const OVERLAY_MIN_ALPHA = 0.1;
-const OVERLAY_MAX_ALPHA = 0.48;
-const OVERLAY_MOTION_GAIN = 10.5;
+const OVERLAY_MIN_ALPHA = 0.08;
+const OVERLAY_MAX_ALPHA = 0.4;
+const OVERLAY_MOTION_GAIN = 7.8;
+const OVERLAY_SIDE_PROFILE_ALPHA = 0.46;
+const OVERLAY_MATCH_MAX_DIST = 0.24;
 const OVERLAY_TRAIL_LENGTH = 7;
 const OVERLAY_TRAIL_MIN_STEP = 0.0032;
 const PALM_CENTER_INDEXES = [0, 5, 9, 13, 17];
@@ -43,6 +45,11 @@ const TRANSFORM_HAND_RETURN_MS = 850;
 const TRANSFORM_SCALE_SMOOTHING = 0.18;
 const TRANSFORM_ROTATION_SMOOTHING = 0.16;
 const PLACEMENT_PREVIEW_OPACITY = 0.28;
+const PLACEMENT_SURFACE_GAP = 0.012;
+const PLACEMENT_COLLISION_TOLERANCE = 0.01;
+const PLACEMENT_NEAR_SNAP_BASE = 0.12;
+const PLACEMENT_NEAR_SNAP_GAIN = 0.18;
+const PLACEMENT_SURFACE_NUDGE_LIMIT = 6;
 const SHAPE_OPTIONS = ["cube", "cuboid", "sphere", "cylinder", "line"];
 const SIGNALS = {
   FIST_DELETE: "fist_delete",
@@ -138,6 +145,11 @@ export function bootstrapApp() {
   world.scene.add(selectionRing);
   world.scene.add(rotationGuide);
   const selectionBounds = new THREE.Box3();
+  const placementBounds = new THREE.Box3();
+  const collisionBounds = new THREE.Box3();
+  const placementSize = new THREE.Vector3();
+  const placementNormal = new THREE.Vector3();
+  const placementRayDirection = new THREE.Vector3();
   const dragPlaneNormal = new THREE.Vector3();
   const lineDepthDirection = new THREE.Vector3();
 
@@ -249,7 +261,316 @@ export function bootstrapApp() {
       floorLocked: targetLike?.isVector3
         ? fallbackFloorLocked
         : (targetLike.floorLocked ?? fallbackFloorLocked),
+      surfaceNormal: targetLike?.surfaceNormal?.clone?.() || null,
+      referencePoint: targetLike?.referencePoint?.clone?.() || null,
+      referenceMesh: targetLike?.referenceMesh || null,
     };
+  }
+
+  function placementSurfaceNormal(intersection) {
+    if (!intersection?.face?.normal || !intersection?.object) return null;
+    placementNormal.copy(intersection.face.normal).transformDirection(intersection.object.matrixWorld).normalize();
+    placementRayDirection.copy(intersection.point).sub(world.camera.position).normalize();
+    if (placementNormal.dot(placementRayDirection) > 0) {
+      placementNormal.multiplyScalar(-1);
+    }
+    return placementNormal.clone();
+  }
+
+  function placementTargetFromSurfaceHit(intersection, fallbackTarget = null) {
+    if (!intersection?.point || !intersection?.object) {
+      return resolvePlacementTarget(fallbackTarget);
+    }
+    const surfaceNormal = placementSurfaceNormal(intersection);
+    if (!surfaceNormal) {
+      return resolvePlacementTarget(fallbackTarget);
+    }
+    return {
+      point: intersection.point.clone(),
+      referencePoint: intersection.point.clone(),
+      referenceMesh: intersection.object,
+      surfaceNormal,
+      floorLocked: false,
+    };
+  }
+
+  function lineCollisionRadius(mesh) {
+    if (!mesh?.geometry) return 0.035;
+    mesh.geometry.computeBoundingBox?.();
+    const bbox = mesh.geometry.boundingBox;
+    if (!bbox) return 0.035;
+    const localDiameter = Math.min(
+      Math.max(0.0001, bbox.max.x - bbox.min.x),
+      Math.max(0.0001, bbox.max.z - bbox.min.z)
+    );
+    return Math.max(0.035, (localDiameter * Math.max(Math.abs(mesh.scale.x || 1), Math.abs(mesh.scale.z || 1), 1e-4)) * 0.5);
+  }
+
+  function placementReferenceFromSolidMesh(mesh, point) {
+    if (!mesh?.geometry || !point?.isVector3) return null;
+    mesh.updateWorldMatrix?.(true, false);
+    mesh.geometry.computeBoundingBox?.();
+    const bbox = mesh.geometry.boundingBox;
+    if (!bbox) return null;
+
+    const inverseMatrix = mesh.matrixWorld.clone().invert();
+    const localPoint = point.clone().applyMatrix4(inverseMatrix);
+    const localSurface = localPoint.clone().clamp(bbox.min, bbox.max);
+    let localNormal = localPoint.clone().sub(localSurface);
+
+    if (localNormal.lengthSq() <= 1e-8) {
+      const xFace = Math.abs(localPoint.x - bbox.min.x) <= Math.abs(localPoint.x - bbox.max.x) ? bbox.min.x : bbox.max.x;
+      const yFace = Math.abs(localPoint.y - bbox.min.y) <= Math.abs(localPoint.y - bbox.max.y) ? bbox.min.y : bbox.max.y;
+      const zFace = Math.abs(localPoint.z - bbox.min.z) <= Math.abs(localPoint.z - bbox.max.z) ? bbox.min.z : bbox.max.z;
+      const dx = Math.min(Math.abs(localPoint.x - bbox.min.x), Math.abs(localPoint.x - bbox.max.x));
+      const dy = Math.min(Math.abs(localPoint.y - bbox.min.y), Math.abs(localPoint.y - bbox.max.y));
+      const dz = Math.min(Math.abs(localPoint.z - bbox.min.z), Math.abs(localPoint.z - bbox.max.z));
+
+      if (dx <= dy && dx <= dz) {
+        localSurface.x = xFace;
+        localNormal.set(xFace === bbox.min.x ? -1 : 1, 0, 0);
+      } else if (dy <= dz) {
+        localSurface.y = yFace;
+        localNormal.set(0, yFace === bbox.min.y ? -1 : 1, 0);
+      } else {
+        localSurface.z = zFace;
+        localNormal.set(0, 0, zFace === bbox.min.z ? -1 : 1);
+      }
+    } else {
+      localNormal.normalize();
+    }
+
+    const worldPoint = localSurface.applyMatrix4(mesh.matrixWorld);
+    const worldNormal = localNormal.transformDirection(mesh.matrixWorld).normalize();
+    return {
+      point: worldPoint.clone(),
+      referencePoint: worldPoint.clone(),
+      referenceMesh: mesh,
+      surfaceNormal: worldNormal.clone(),
+      floorLocked: false,
+      distance: point.distanceTo(worldPoint),
+    };
+  }
+
+  function placementReferenceFromLineMesh(mesh, point) {
+    if (!mesh || !point?.isVector3) return null;
+    mesh.updateWorldMatrix?.(true, false);
+    const endpoints = lineEndpointsForMesh(mesh);
+    if (!endpoints?.start || !endpoints?.end) return null;
+
+    const segment = endpoints.end.clone().sub(endpoints.start);
+    const lengthSq = segment.lengthSq();
+    if (lengthSq < 1e-6) return null;
+
+    const axisDirection = segment.clone().normalize();
+    const t = clamp(point.clone().sub(endpoints.start).dot(segment) / lengthSq, 0, 1);
+    const axisPoint = endpoints.start.clone().addScaledVector(segment, t);
+    const radial = point.clone().sub(axisPoint);
+    radial.addScaledVector(axisDirection, -radial.dot(axisDirection));
+    if (radial.lengthSq() <= 1e-8) {
+      radial.copy(world.camera.position).sub(axisPoint);
+      radial.addScaledVector(axisDirection, -radial.dot(axisDirection));
+    }
+    if (radial.lengthSq() <= 1e-8) {
+      radial.copy(new THREE.Vector3(0, 1, 0).cross(axisDirection));
+    }
+    if (radial.lengthSq() <= 1e-8) {
+      radial.set(1, 0, 0);
+    }
+    radial.normalize();
+
+    const worldPoint = axisPoint.addScaledVector(radial, lineCollisionRadius(mesh));
+    return {
+      point: worldPoint.clone(),
+      referencePoint: worldPoint.clone(),
+      referenceMesh: mesh,
+      surfaceNormal: radial.clone(),
+      floorLocked: false,
+      distance: point.distanceTo(worldPoint),
+    };
+  }
+
+  function placementReferenceFromMesh(mesh, point) {
+    if (!mesh || !point?.isVector3) return null;
+    if (mesh.userData?.shape === "line") {
+      return placementReferenceFromLineMesh(mesh, point);
+    }
+    return placementReferenceFromSolidMesh(mesh, point);
+  }
+
+  function placementNearSnapDistance() {
+    const size = Number(sizeInputEl?.value || 1);
+    return clamp((size * PLACEMENT_NEAR_SNAP_GAIN) + PLACEMENT_NEAR_SNAP_BASE, 0.14, 0.48);
+  }
+
+  function findNearbyPlacementReference(point) {
+    if (!point?.isVector3) return null;
+    let best = null;
+    let bestDist = Infinity;
+
+    for (const mesh of placedMeshes) {
+      const candidate = placementReferenceFromMesh(mesh, point);
+      if (!candidate) continue;
+      const reach = placementNearSnapDistance() + Math.min(0.18, meshSelectionRadius(mesh) * 0.1);
+      if (candidate.distance > reach || candidate.distance >= bestDist) continue;
+      best = candidate;
+      bestDist = candidate.distance;
+    }
+    return best;
+  }
+
+  function placementTargetFromProjectedPoint(projectedTarget = null) {
+    const fallbackTarget = resolvePlacementTarget(projectedTarget);
+    if (!fallbackTarget?.point) return null;
+    const nearbyTarget = findNearbyPlacementReference(fallbackTarget.point);
+    return nearbyTarget || fallbackTarget;
+  }
+
+  function placementTargetFromLandmark(landmark, anchorPoint = null) {
+    const fallbackTarget = world.projectToPlacement(landmark, anchorPoint);
+    const surfaceHit = world.pickObjectFromLandmark?.(landmark, placedMeshes);
+    if (surfaceHit) {
+      return placementTargetFromSurfaceHit(surfaceHit, fallbackTarget);
+    }
+    return placementTargetFromProjectedPoint(fallbackTarget);
+  }
+
+  function placementTargetFromClient(clientX, clientY, anchorPoint = null) {
+    const fallbackTarget = world.projectClientToPlacement?.(clientX, clientY, anchorPoint);
+    const surfaceHit = world.pickObject?.(clientX, clientY, placedMeshes);
+    if (surfaceHit) {
+      return placementTargetFromSurfaceHit(surfaceHit, fallbackTarget);
+    }
+    return placementTargetFromProjectedPoint(fallbackTarget);
+  }
+
+  function snapPlacementAxis(value, floorLocked = true, axis = "x") {
+    if (!shouldSnapPosition()) return value;
+    if (floorLocked && axis === "y") return value;
+    return snapValue(value);
+  }
+
+  function meshHalfExtentAlongNormal(mesh, normal) {
+    if (!mesh?.geometry || !normal) return 0;
+    placementBounds.setFromObject(mesh);
+    if (placementBounds.isEmpty()) return 0;
+    placementBounds.getSize(placementSize);
+    return (
+      Math.abs(normal.x) * placementSize.x +
+      Math.abs(normal.y) * placementSize.y +
+      Math.abs(normal.z) * placementSize.z
+    ) * 0.5;
+  }
+
+  function resolveSolidAnchorHit(targetLike, mesh, fallbackFloorLocked = true) {
+    const placementTarget = resolvePlacementTarget(targetLike, fallbackFloorLocked);
+    if (!placementTarget?.point) return null;
+    if (!placementTarget.surfaceNormal || !mesh) {
+      return anchoredPlacementHit(placementTarget, fallbackFloorLocked);
+    }
+
+    const anchorHit = (placementTarget.referencePoint || placementTarget.point).clone();
+    anchorHit.addScaledVector(
+      placementTarget.surfaceNormal,
+      meshHalfExtentAlongNormal(mesh, placementTarget.surfaceNormal) + PLACEMENT_SURFACE_GAP
+    );
+    anchorHit.x = snapPlacementAxis(anchorHit.x, false, "x");
+    anchorHit.y = snapPlacementAxis(anchorHit.y, false, "y");
+    anchorHit.z = snapPlacementAxis(anchorHit.z, false, "z");
+    return anchorHit;
+  }
+
+  function boxesOverlapWithTolerance(a, b, tolerance = PLACEMENT_COLLISION_TOLERANCE) {
+    return (
+      a.min.x < (b.max.x - tolerance) &&
+      a.max.x > (b.min.x + tolerance) &&
+      a.min.y < (b.max.y - tolerance) &&
+      a.max.y > (b.min.y + tolerance) &&
+      a.min.z < (b.max.z - tolerance) &&
+      a.max.z > (b.min.z + tolerance)
+    );
+  }
+
+  function boxOverlapDepthAlongAxis(a, b, axis) {
+    const axisLengthSq = axis.lengthSq?.() || 0;
+    if (axisLengthSq <= 1e-8) return 0;
+
+    const nx = axis.x;
+    const ny = axis.y;
+    const nz = axis.z;
+
+    const aCenterX = (a.min.x + a.max.x) * 0.5;
+    const aCenterY = (a.min.y + a.max.y) * 0.5;
+    const aCenterZ = (a.min.z + a.max.z) * 0.5;
+    const bCenterX = (b.min.x + b.max.x) * 0.5;
+    const bCenterY = (b.min.y + b.max.y) * 0.5;
+    const bCenterZ = (b.min.z + b.max.z) * 0.5;
+
+    const aHalfX = (a.max.x - a.min.x) * 0.5;
+    const aHalfY = (a.max.y - a.min.y) * 0.5;
+    const aHalfZ = (a.max.z - a.min.z) * 0.5;
+    const bHalfX = (b.max.x - b.min.x) * 0.5;
+    const bHalfY = (b.max.y - b.min.y) * 0.5;
+    const bHalfZ = (b.max.z - b.min.z) * 0.5;
+
+    const centerA = (aCenterX * nx) + (aCenterY * ny) + (aCenterZ * nz);
+    const centerB = (bCenterX * nx) + (bCenterY * ny) + (bCenterZ * nz);
+    const radiusA = (Math.abs(nx) * aHalfX) + (Math.abs(ny) * aHalfY) + (Math.abs(nz) * aHalfZ);
+    const radiusB = (Math.abs(nx) * bHalfX) + (Math.abs(ny) * bHalfY) + (Math.abs(nz) * bHalfZ);
+
+    const minA = centerA - radiusA;
+    const maxA = centerA + radiusA;
+    const minB = centerB - radiusB;
+    const maxB = centerB + radiusB;
+    return Math.min(maxA, maxB) - Math.max(minA, minB);
+  }
+
+  function findPlacementCollision(mesh, ignoredMesh = null) {
+    if (!mesh) return null;
+    placementBounds.setFromObject(mesh);
+    if (placementBounds.isEmpty()) return null;
+
+    for (const candidate of placedMeshes) {
+      if (!candidate || candidate === ignoredMesh) continue;
+      if (candidate.userData?.shape === "line") continue;
+      collisionBounds.setFromObject(candidate);
+      if (collisionBounds.isEmpty()) continue;
+      if (boxesOverlapWithTolerance(placementBounds, collisionBounds)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  function pushPlacementMeshOutOfCollision(mesh, preferredNormal = null, ignoredMesh = null) {
+    if (!mesh || !preferredNormal?.isVector3 || preferredNormal.lengthSq() <= 1e-8) {
+      return findPlacementCollision(mesh, ignoredMesh);
+    }
+
+    const axis = preferredNormal.clone().normalize();
+    for (let step = 0; step < PLACEMENT_SURFACE_NUDGE_LIMIT; step += 1) {
+      placementBounds.setFromObject(mesh);
+      if (placementBounds.isEmpty()) return null;
+
+      let blockingMesh = null;
+      let pushDepth = 0;
+      for (const candidate of placedMeshes) {
+        if (!candidate || candidate === ignoredMesh) continue;
+        if (candidate.userData?.shape === "line") continue;
+        collisionBounds.setFromObject(candidate);
+        if (collisionBounds.isEmpty() || !boxesOverlapWithTolerance(placementBounds, collisionBounds)) continue;
+
+        blockingMesh = candidate;
+        pushDepth = boxOverlapDepthAlongAxis(placementBounds, collisionBounds, axis);
+        if (pushDepth > 0.0005) break;
+      }
+
+      if (!blockingMesh) return null;
+      if (pushDepth <= 0.0005) return blockingMesh;
+      mesh.position.addScaledVector(axis, pushDepth + PLACEMENT_SURFACE_GAP);
+    }
+
+    return findPlacementCollision(mesh, ignoredMesh);
   }
 
   function normalizeLineAnchor(hitPoint) {
@@ -462,12 +783,19 @@ export function bootstrapApp() {
         mesh,
         anchorHit: anchorHit.clone(),
         floorLocked,
+        referencePoint: previewTarget?.referencePoint?.clone?.() || null,
+        surfaceNormal: previewTarget?.surfaceNormal?.clone?.() || null,
+        referenceMesh: previewTarget?.referenceMesh || null,
+        blockedBy: null,
       };
     }
 
     if (placementPreview.mesh.userData.previewSize !== nextSize) {
       const fixedAnchorHit = placementPreview.anchorHit.clone();
       const fixedFloorLocked = placementPreview.floorLocked !== false;
+      const fixedReferencePoint = placementPreview.referencePoint?.clone?.() || null;
+      const fixedSurfaceNormal = placementPreview.surfaceNormal?.clone?.() || null;
+      const fixedReferenceMesh = placementPreview.referenceMesh || null;
       disposePlacementPreview();
       const mesh = world.buildMesh(nextShape, nextSize, nextColor);
       mesh.userData.previewShape = nextShape;
@@ -478,20 +806,43 @@ export function bootstrapApp() {
         mesh,
         anchorHit: fixedAnchorHit,
         floorLocked: fixedFloorLocked,
+        referencePoint: fixedReferencePoint,
+        surfaceNormal: fixedSurfaceNormal,
+        referenceMesh: fixedReferenceMesh,
+        blockedBy: null,
       };
     }
 
     const previewMesh = placementPreview.mesh;
     syncPreviewMeshAppearance(previewMesh, nextShape, nextColor);
+    const anchorSource = placementPreview.surfaceNormal
+      ? placementPreview
+      : (placementPreview.anchorHit ? { point: placementPreview.anchorHit, floorLocked: placementPreview.floorLocked } : previewTarget);
+    const nextAnchorHit = resolveSolidAnchorHit(anchorSource, previewMesh, placementPreview.floorLocked);
+    if (!nextAnchorHit) return null;
+    placementPreview.anchorHit = nextAnchorHit.clone();
     previewMesh.position.copy(placementPreview.anchorHit);
-    if (placementPreview.floorLocked !== false) {
+    if (placementPreview.floorLocked !== false && !placementPreview.surfaceNormal) {
       alignMeshToGround(previewMesh);
+    }
+    placementPreview.blockedBy = placementPreview.surfaceNormal
+      ? pushPlacementMeshOutOfCollision(previewMesh, placementPreview.surfaceNormal)
+      : findPlacementCollision(previewMesh);
+    placementPreview.anchorHit.copy(previewMesh.position);
+    if (placementPreview.blockedBy) {
+      previewMesh.material.emissive.setRGB(0.58, 0.1, 0.08);
+      previewMesh.material.opacity = Math.min(previewMesh.material.opacity, 0.22);
     }
     return placementPreview;
   }
 
   function confirmPlacementPreview(now) {
     if (!placementPreview?.mesh) return false;
+    if (placementPreview.shape !== "line" && placementPreview.blockedBy) {
+      const label = placementPreview.blockedBy.userData?.label || placementPreview.blockedBy.userData?.shape || "another object";
+      setStatus(`Move the preview clear of ${label} before placing`, "idle");
+      return false;
+    }
     if (placementPreview.shape === "line") {
       if (!placementPreview.lineEndHit || lineLength(placementPreview.lineStartHit, placementPreview.lineEndHit) < 0.08) {
         setStatus("Pick a second point a little farther away for the line end", "idle");
@@ -509,7 +860,6 @@ export function bootstrapApp() {
     if (placementPreview.shape === "line") {
       applyLineEndpoints(mesh, placementPreview.lineStartHit, placementPreview.lineEndHit, Number(sizeInputEl.value));
     } else {
-      mesh.rotation.y = snapRotation(Math.random() * Math.PI);
       delete mesh.userData.lineStart;
       delete mesh.userData.lineEnd;
     }
@@ -579,7 +929,7 @@ export function bootstrapApp() {
     const anchorPoint = placementPreview?.shape === "line"
       ? (placementPreview.lineStartHit || world.getViewTarget())
       : world.getViewTarget();
-    const placementTarget = world.projectClientToPlacement?.(clientX, clientY, anchorPoint);
+    const placementTarget = placementTargetFromClient(clientX, clientY, anchorPoint);
     if (!placementTarget?.point) {
       setStatus("Couldn't place object at that point", "idle");
       return false;
@@ -724,7 +1074,37 @@ export function bootstrapApp() {
     };
   }
 
-  function smoothOverlayLandmark(prev, next) {
+  function handProfileAlpha(hand) {
+    if (!hand) return 1;
+    const palmHeight = Math.max(0.0001, lmkDist(hand[0], hand[9]));
+    const palmWidth = lmkDist(hand[5], hand[17]);
+    const profileRatio = palmWidth / palmHeight;
+    return clamp(profileRatio / 0.9, OVERLAY_SIDE_PROFILE_ALPHA, 1);
+  }
+
+  function findOverlayPrevState(hand, prevStates, usedIndexes) {
+    const palm = palmCenterLandmark(hand) || hand?.[0];
+    if (!palm || !prevStates?.length) return null;
+
+    let bestIndex = -1;
+    let bestScore = Infinity;
+    prevStates.forEach((state, index) => {
+      if (usedIndexes.has(index) || !state?.landmarks?.length) return;
+      const prevPalm = palmCenterLandmark(state.landmarks) || state.landmarks[0];
+      if (!prevPalm) return;
+      const score = lmkDist(palm, prevPalm);
+      if (score < bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    });
+
+    if (bestIndex === -1 || bestScore > OVERLAY_MATCH_MAX_DIST) return null;
+    usedIndexes.add(bestIndex);
+    return prevStates[bestIndex];
+  }
+
+  function smoothOverlayLandmark(prev, next, alphaScale = 1) {
     if (!next) return prev ? cloneLandmark(prev) : null;
     if (!prev) return cloneLandmark(next);
 
@@ -732,11 +1112,12 @@ export function bootstrapApp() {
     const dy = next.y - prev.y;
     const dz = (next.z || 0) - (prev.z || 0);
     const motion = Math.hypot(dx, dy, dz);
-    const alpha = clamp(
+    const baseAlpha = clamp(
       OVERLAY_MIN_ALPHA + (motion * OVERLAY_MOTION_GAIN),
       OVERLAY_MIN_ALPHA,
       OVERLAY_MAX_ALPHA
     );
+    const alpha = clamp(baseAlpha * alphaScale, OVERLAY_MIN_ALPHA * 0.7, OVERLAY_MAX_ALPHA);
 
     prev.x += dx * alpha;
     prev.y += dy * alpha;
@@ -768,10 +1149,13 @@ export function bootstrapApp() {
   }
 
   function smoothHandsForOverlay(hands) {
-    overlayHandStates = hands.map((hand, index) => {
-      const prevState = overlayHandStates[index];
+    const prevStates = overlayHandStates;
+    const usedIndexes = new Set();
+    overlayHandStates = hands.map((hand) => {
+      const prevState = findOverlayPrevState(hand, prevStates, usedIndexes);
+      const alphaScale = handProfileAlpha(hand);
       const landmarks = hand.map((point, pointIndex) =>
-        smoothOverlayLandmark(prevState?.landmarks?.[pointIndex], point)
+        smoothOverlayLandmark(prevState?.landmarks?.[pointIndex], point, alphaScale)
       );
       const contact = midpointLandmark(landmarks[4], landmarks[8]) || landmarks[8];
 
@@ -2091,9 +2475,9 @@ export function bootstrapApp() {
       baseOptions: { modelAssetPath: MODEL_PATH, delegate: "GPU" },
       runningMode: "VIDEO",
       numHands: 2,
-      minHandDetectionConfidence: 0.5,
-      minHandPresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
+      minHandDetectionConfidence: 0.42,
+      minHandPresenceConfidence: 0.38,
+      minTrackingConfidence: 0.38,
     });
   }
 
@@ -2125,7 +2509,7 @@ export function bootstrapApp() {
         ? (placementPreview.lineStartHit || world.getViewTarget())
         : (placementPreview?.anchorHit || world.getViewTarget());
       const pinchPlacementRaw = primaryContactLandmark
-        ? world.projectToPlacement(primaryContactLandmark, placementAnchor)
+        ? placementTargetFromLandmark(primaryContactLandmark, placementAnchor)
         : null;
       const pinchHitRaw = pinchPlacementRaw?.point || null;
       const primaryIndexHitRaw = primaryVisual?.[8] ? world.projectToGround(primaryVisual[8]) : null;
