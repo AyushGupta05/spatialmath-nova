@@ -382,6 +382,7 @@ export function createWorld(container) {
   return {
     scene,
     camera,
+    controls,
     renderer,
     projectToGround,
     projectToPlacement,

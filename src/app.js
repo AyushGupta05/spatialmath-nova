@@ -6,55 +6,31 @@ import { appState } from "./state/store.js";
 import { createWorld } from "./render/world.js";
 import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
 import * as THREE from "three";
+import {
+  isFistPose, isThumbsUpPose, isThumbsDownPose,
+  isPointPose, isDirectPinchPose, isLinePointPinchPose,
+  lmkDist, palmScale,
+} from "./tracking/poses.js";
+import {
+  HAND_CONNECTIONS, SHOW_HAND_MARKERS, HAND_OVERLAY_SCALE,
+  OVERLAY_MIN_ALPHA, OVERLAY_MAX_ALPHA, OVERLAY_MOTION_GAIN,
+  OVERLAY_SIDE_PROFILE_ALPHA, OVERLAY_MATCH_MAX_DIST,
+  OVERLAY_TRAIL_LENGTH, OVERLAY_TRAIL_MIN_STEP,
+  PALM_CENTER_INDEXES, SPAWN_COOLDOWN_MS, FIST_DELETE_COOLDOWN_MS,
+  FIST_HOLD_MS, OPERATION_COOLDOWN_MS,
+  PLACEMENT_PULSE_BASE, PLACEMENT_PULSE_GAIN, PLACEMENT_PULSE_TRIGGER_RADIUS,
+  SELECTION_RING_BASE_RADIUS, VIEW_DRAG_GROUND_LOCK_THRESHOLD,
+  LINE_DEPTH_RAY_GAIN, LINE_DEPTH_MAX_OFFSET, LINE_DEPTH_DEADZONE,
+  TRANSFORM_SELECT_BUFFER, TRANSFORM_MIDPOINT_RADIUS_FACTOR, TRANSFORM_OPPOSITION_DOT_MAX,
+  MIN_TRANSFORM_SPAN, MIN_MESH_SCALE, MAX_MESH_SCALE,
+  TRANSFORM_LOCK_MS, TRANSFORM_HAND_RETURN_MS,
+  TRANSFORM_SCALE_SMOOTHING, TRANSFORM_ROTATION_SMOOTHING,
+  PLACEMENT_PREVIEW_OPACITY, PLACEMENT_SURFACE_GAP, PLACEMENT_COLLISION_TOLERANCE,
+  PLACEMENT_NEAR_SNAP_BASE, PLACEMENT_NEAR_SNAP_GAIN, PLACEMENT_SURFACE_NUDGE_LIMIT,
+  SHAPE_OPTIONS, SIGNALS,
+} from "./config/constants.js";
 
 const MODEL_PATH = new URL("../models/hand_landmarker.task", window.location.href).toString();
-const HAND_CONNECTIONS = [
-  [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
-  [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]
-];
-const SHOW_HAND_MARKERS = true;
-const HAND_OVERLAY_SCALE = 0.88;
-const OVERLAY_MIN_ALPHA = 0.08;
-const OVERLAY_MAX_ALPHA = 0.4;
-const OVERLAY_MOTION_GAIN = 7.8;
-const OVERLAY_SIDE_PROFILE_ALPHA = 0.46;
-const OVERLAY_MATCH_MAX_DIST = 0.24;
-const OVERLAY_TRAIL_LENGTH = 7;
-const OVERLAY_TRAIL_MIN_STEP = 0.0032;
-const PALM_CENTER_INDEXES = [0, 5, 9, 13, 17];
-const SPAWN_COOLDOWN_MS = 2000;
-const FIST_DELETE_COOLDOWN_MS = 420;
-const FIST_HOLD_MS = 180;
-const OPERATION_COOLDOWN_MS = 900;
-const PLACEMENT_PULSE_BASE = 8;
-const PLACEMENT_PULSE_GAIN = 7;
-const PLACEMENT_PULSE_TRIGGER_RADIUS = 12.2;
-const SELECTION_RING_BASE_RADIUS = 0.31;
-const VIEW_DRAG_GROUND_LOCK_THRESHOLD = 0.72;
-const LINE_DEPTH_RAY_GAIN = 2.9;
-const LINE_DEPTH_MAX_OFFSET = 9;
-const LINE_DEPTH_DEADZONE = 0.005;
-const TRANSFORM_SELECT_BUFFER = 0.95;
-const TRANSFORM_MIDPOINT_RADIUS_FACTOR = 1.08;
-const TRANSFORM_OPPOSITION_DOT_MAX = 0.72;
-const MIN_TRANSFORM_SPAN = 0.3;
-const MIN_MESH_SCALE = 0.35;
-const MAX_MESH_SCALE = 4.5;
-const TRANSFORM_LOCK_MS = 90;
-const TRANSFORM_HAND_RETURN_MS = 850;
-const TRANSFORM_SCALE_SMOOTHING = 0.18;
-const TRANSFORM_ROTATION_SMOOTHING = 0.16;
-const PLACEMENT_PREVIEW_OPACITY = 0.28;
-const PLACEMENT_SURFACE_GAP = 0.012;
-const PLACEMENT_COLLISION_TOLERANCE = 0.01;
-const PLACEMENT_NEAR_SNAP_BASE = 0.12;
-const PLACEMENT_NEAR_SNAP_GAIN = 0.18;
-const PLACEMENT_SURFACE_NUDGE_LIMIT = 6;
-const SHAPE_OPTIONS = ["cube", "cuboid", "sphere", "cylinder", "line"];
-const SIGNALS = {
-  FIST_DELETE: "fist_delete",
-  POINT_ROTATE: "point_rotate",
-};
 
 export function bootstrapApp() {
   const webcamEl = document.querySelector("#webcam");
@@ -1415,11 +1391,6 @@ export function bootstrapApp() {
     return pendingTransformSince != null && (now - pendingTransformSince) >= TRANSFORM_LOCK_MS;
   }
 
-  function lmkDist(a, b) {
-    if (!a || !b) return Infinity;
-    return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-  }
-
   function sortHandsForTracking(hands) {
     return [...hands].sort((handA, handB) => {
       const palmA = palmCenterLandmark(handA);
@@ -1428,13 +1399,7 @@ export function bootstrapApp() {
     });
   }
 
-  function palmScale(hand) {
-    if (!hand) return 1;
-    // stable hand size reference
-    return Math.max(1e-4, lmkDist(hand[0], hand[9]));
-  }
-
-  function isFistPose(hand) {
+  function classifySignal(primary, interaction) {
     if (!hand) return false;
     const scale = palmScale(hand);
     const wrist = hand[0];
@@ -3207,4 +3172,7 @@ export function bootstrapApp() {
   renderObjectList();
   setStatus("Ready. Start camera to begin.", "idle");
   setIntent("ready", "idle");
+
+  // Expose world for tutor integration
+  return { world };
 }

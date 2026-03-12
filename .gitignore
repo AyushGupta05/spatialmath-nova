@@ -5,3 +5,5 @@ __pycache__/
 .keras/
 .local/
 models/tf_gesture/
+node_modules/
+.env.local

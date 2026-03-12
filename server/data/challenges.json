@@ -1,0 +1,388 @@
+[
+  {
+    "id": "cube-volume-1",
+    "title": "Volume of a Cube",
+    "difficulty": "easy",
+    "category": "volume",
+    "question": "What is the volume of a cube with side length 4 units?",
+    "sceneSpec": {
+      "question": "What is the volume of a cube with side length 4 units?",
+      "questionType": "volume",
+      "objects": [
+        {
+          "id": "A",
+          "shape": "cube",
+          "params": { "size": 4 },
+          "position": [0, 2, 0],
+          "rotation": [0, 0, 0],
+          "color": "#7cf7e4",
+          "highlight": true
+        }
+      ],
+      "labels": [
+        { "text": "s = 4", "attachTo": "A", "offset": [2.5, 0, 0], "style": "dimension" },
+        { "text": "Cube A", "attachTo": "A", "offset": [0, 3, 0], "style": "name" }
+      ],
+      "dimensions": [
+        { "from": [-2, 0, 2], "to": [2, 0, 2], "label": "4 units" },
+        { "from": [2, 0, 2], "to": [2, 4, 2], "label": "4 units" }
+      ],
+      "camera": { "position": [8, 6, 8], "target": [0, 2, 0] },
+      "answer": {
+        "value": 64,
+        "unit": "cubic units",
+        "formula": "V = s^3",
+        "steps": [
+          { "text": "Identify the shape: this is a cube with all sides equal.", "formula": "", "highlightObjects": ["A"] },
+          { "text": "The formula for the volume of a cube is V = s^3, where s is the side length.", "formula": "V = s^3", "highlightObjects": ["A"] },
+          { "text": "Substitute s = 4: V = 4^3 = 4 x 4 x 4 = 64 cubic units.", "formula": "V = 4^3 = 64", "highlightObjects": ["A"] }
+        ]
+      }
+    },
+    "expectedAnswer": 64,
+    "tolerance": 0.01,
+    "hints": ["The formula for volume of a cube is V = s^3", "s = 4, so calculate 4 x 4 x 4"],
+    "successMessage": "Correct! The volume of a cube with side 4 is 4^3 = 64 cubic units."
+  },
+  {
+    "id": "sphere-volume-1",
+    "title": "Volume of a Sphere",
+    "difficulty": "easy",
+    "category": "volume",
+    "question": "What is the volume of a sphere with radius 3 units? Round to two decimal places.",
+    "sceneSpec": {
+      "question": "What is the volume of a sphere with radius 3 units?",
+      "questionType": "volume",
+      "objects": [
+        {
+          "id": "A",
+          "shape": "sphere",
+          "params": { "radius": 3 },
+          "position": [0, 3, 0],
+          "rotation": [0, 0, 0],
+          "color": "#48c9ff",
+          "highlight": true
+        }
+      ],
+      "labels": [
+        { "text": "r = 3", "attachTo": "A", "offset": [3.5, 0, 0], "style": "dimension" },
+        { "text": "Sphere A", "attachTo": "A", "offset": [0, 4.5, 0], "style": "name" }
+      ],
+      "dimensions": [
+        { "from": [0, 3, 0], "to": [3, 3, 0], "label": "r = 3" }
+      ],
+      "camera": { "position": [10, 7, 10], "target": [0, 3, 0] },
+      "answer": {
+        "value": 113.1,
+        "unit": "cubic units",
+        "formula": "V = (4/3) * pi * r^3",
+        "steps": [
+          { "text": "Identify the shape: this is a sphere with radius 3.", "formula": "", "highlightObjects": ["A"] },
+          { "text": "The volume formula for a sphere is V = (4/3) * pi * r^3.", "formula": "V = (4/3)pi*r^3", "highlightObjects": ["A"] },
+          { "text": "Substitute r = 3: V = (4/3) * pi * 27 = 36pi = 113.10 cubic units.", "formula": "V = (4/3) * pi * 27 = 113.10", "highlightObjects": ["A"] }
+        ]
+      }
+    },
+    "expectedAnswer": 113.1,
+    "tolerance": 0.01,
+    "hints": ["Use V = (4/3) * pi * r^3", "r = 3, so r^3 = 27"],
+    "successMessage": "Correct! V = (4/3) * pi * 3^3 = 36pi = 113.10 cubic units."
+  },
+  {
+    "id": "cylinder-sa-1",
+    "title": "Surface Area of a Cylinder",
+    "difficulty": "medium",
+    "category": "surface_area",
+    "question": "Find the total surface area of a cylinder with radius 2 and height 5. Round to two decimal places.",
+    "sceneSpec": {
+      "question": "Find the total surface area of a cylinder with radius 2 and height 5.",
+      "questionType": "surface_area",
+      "objects": [
+        {
+          "id": "A",
+          "shape": "cylinder",
+          "params": { "radius": 2, "height": 5 },
+          "position": [0, 2.5, 0],
+          "rotation": [0, 0, 0],
+          "color": "#ffd966",
+          "highlight": true
+        }
+      ],
+      "labels": [
+        { "text": "r = 2", "attachTo": "A", "offset": [2.5, 0, 0], "style": "dimension" },
+        { "text": "h = 5", "attachTo": "A", "offset": [-3, 0, 0], "style": "dimension" },
+        { "text": "Cylinder A", "attachTo": "A", "offset": [0, 4, 0], "style": "name" }
+      ],
+      "dimensions": [
+        { "from": [0, 0, 0], "to": [2, 0, 0], "label": "r = 2" },
+        { "from": [2, 0, 0], "to": [2, 5, 0], "label": "h = 5" }
+      ],
+      "camera": { "position": [8, 6, 8], "target": [0, 2.5, 0] },
+      "answer": {
+        "value": 87.96,
+        "unit": "square units",
+        "formula": "SA = 2*pi*r*(r + h)",
+        "steps": [
+          { "text": "The total surface area of a cylinder includes two circular bases and the lateral surface.", "formula": "", "highlightObjects": ["A"] },
+          { "text": "Formula: SA = 2*pi*r*(r + h), where r = 2 and h = 5.", "formula": "SA = 2*pi*r*(r + h)", "highlightObjects": ["A"] },
+          { "text": "SA = 2*pi*2*(2 + 5) = 4*pi*7 = 28*pi = 87.96 square units.", "formula": "SA = 28*pi = 87.96", "highlightObjects": ["A"] }
+        ]
+      }
+    },
+    "expectedAnswer": 87.96,
+    "tolerance": 0.05,
+    "hints": ["Total SA = 2 circles + lateral area", "SA = 2*pi*r*(r + h)"],
+    "successMessage": "Correct! SA = 2*pi*2*(2+5) = 28*pi = 87.96 square units."
+  },
+  {
+    "id": "composite-1",
+    "title": "Composite Shape Volume",
+    "difficulty": "medium",
+    "category": "composite",
+    "question": "A hemisphere of radius 2 sits on top of a cylinder of radius 2 and height 3. What is the total volume? Round to two decimal places.",
+    "sceneSpec": {
+      "question": "A hemisphere of radius 2 sits on top of a cylinder of radius 2 and height 3. What is the total volume?",
+      "questionType": "composite",
+      "objects": [
+        {
+          "id": "A",
+          "shape": "cylinder",
+          "params": { "radius": 2, "height": 3 },
+          "position": [0, 1.5, 0],
+          "rotation": [0, 0, 0],
+          "color": "#48c9ff",
+          "highlight": false
+        },
+        {
+          "id": "B",
+          "shape": "sphere",
+          "params": { "radius": 2 },
+          "position": [0, 3, 0],
+          "rotation": [0, 0, 0],
+          "color": "#ff7ca8",
+          "highlight": false
+        }
+      ],
+      "labels": [
+        { "text": "Cylinder A", "attachTo": "A", "offset": [3, 0, 0], "style": "name" },
+        { "text": "r = 2, h = 3", "attachTo": "A", "offset": [-3, 0, 0], "style": "dimension" },
+        { "text": "Hemisphere B", "attachTo": "B", "offset": [3, 1, 0], "style": "name" },
+        { "text": "r = 2", "attachTo": "B", "offset": [-3, 1, 0], "style": "dimension" }
+      ],
+      "dimensions": [],
+      "camera": { "position": [10, 8, 10], "target": [0, 2.5, 0] },
+      "answer": {
+        "value": 54.45,
+        "unit": "cubic units",
+        "formula": "V = pi*r^2*h + (2/3)*pi*r^3",
+        "steps": [
+          { "text": "Break this into two parts: the cylinder volume and the hemisphere volume.", "formula": "", "highlightObjects": ["A", "B"] },
+          { "text": "Cylinder volume: V_cyl = pi*r^2*h = pi*4*3 = 12*pi.", "formula": "V_cyl = 12*pi", "highlightObjects": ["A"] },
+          { "text": "Hemisphere volume: V_hemi = (2/3)*pi*r^3 = (2/3)*pi*8 = (16/3)*pi.", "formula": "V_hemi = (16/3)*pi", "highlightObjects": ["B"] },
+          { "text": "Total: V = 12*pi + (16/3)*pi = (52/3)*pi = 54.45 cubic units.", "formula": "V = (52/3)*pi = 54.45", "highlightObjects": ["A", "B"] }
+        ]
+      }
+    },
+    "expectedAnswer": 54.45,
+    "tolerance": 0.1,
+    "hints": ["Split into cylinder + hemisphere", "V_cylinder = pi*r^2*h, V_hemisphere = (2/3)*pi*r^3"],
+    "successMessage": "Correct! Total volume = 12*pi + (16/3)*pi = (52/3)*pi = 54.45 cubic units."
+  },
+  {
+    "id": "comparison-1",
+    "title": "Volume Comparison",
+    "difficulty": "medium",
+    "category": "comparison",
+    "question": "Which has a greater volume: a cube with side 5, or a sphere with radius 3? By how much? Round to two decimal places.",
+    "sceneSpec": {
+      "question": "Which has a greater volume: a cube with side 5, or a sphere with radius 3?",
+      "questionType": "comparison",
+      "objects": [
+        {
+          "id": "A",
+          "shape": "cube",
+          "params": { "size": 5 },
+          "position": [-4, 2.5, 0],
+          "rotation": [0, 0.3, 0],
+          "color": "#7cf7e4",
+          "highlight": false
+        },
+        {
+          "id": "B",
+          "shape": "sphere",
+          "params": { "radius": 3 },
+          "position": [5, 3, 0],
+          "rotation": [0, 0, 0],
+          "color": "#ff7ca8",
+          "highlight": false
+        }
+      ],
+      "labels": [
+        { "text": "s = 5", "attachTo": "A", "offset": [3, 0, 0], "style": "dimension" },
+        { "text": "Cube A", "attachTo": "A", "offset": [0, 4, 0], "style": "name" },
+        { "text": "r = 3", "attachTo": "B", "offset": [3.5, 0, 0], "style": "dimension" },
+        { "text": "Sphere B", "attachTo": "B", "offset": [0, 5, 0], "style": "name" }
+      ],
+      "dimensions": [],
+      "camera": { "position": [12, 8, 12], "target": [0, 2, 0] },
+      "answer": {
+        "value": 11.9,
+        "unit": "cubic units",
+        "formula": "Difference = V_cube - V_sphere",
+        "steps": [
+          { "text": "Calculate the volume of cube A: V = s^3 = 5^3 = 125 cubic units.", "formula": "V_cube = 125", "highlightObjects": ["A"] },
+          { "text": "Calculate the volume of sphere B: V = (4/3)*pi*r^3 = (4/3)*pi*27 = 36*pi = 113.10 cubic units.", "formula": "V_sphere = 113.10", "highlightObjects": ["B"] },
+          { "text": "The cube has the greater volume. Difference = 125 - 113.10 = 11.90 cubic units.", "formula": "125 - 113.10 = 11.90", "highlightObjects": ["A", "B"] }
+        ]
+      }
+    },
+    "expectedAnswer": 11.9,
+    "tolerance": 0.1,
+    "hints": ["Calculate each volume separately: V_cube = s^3, V_sphere = (4/3)*pi*r^3", "Find the difference between the two"],
+    "successMessage": "Correct! Cube volume is 125, sphere volume is 113.10. The cube is larger by 11.90 cubic units."
+  },
+  {
+    "id": "cuboid-sa-1",
+    "title": "Surface Area of a Cuboid",
+    "difficulty": "easy",
+    "category": "surface_area",
+    "question": "Find the surface area of a cuboid with width 3, height 4, and depth 5.",
+    "sceneSpec": {
+      "question": "Find the surface area of a cuboid with width 3, height 4, and depth 5.",
+      "questionType": "surface_area",
+      "objects": [
+        {
+          "id": "A",
+          "shape": "cuboid",
+          "params": { "width": 3, "height": 4, "depth": 5 },
+          "position": [0, 2, 0],
+          "rotation": [0, 0.2, 0],
+          "color": "#b088f9",
+          "highlight": true
+        }
+      ],
+      "labels": [
+        { "text": "w=3, h=4, d=5", "attachTo": "A", "offset": [0, 3.5, 0], "style": "dimension" },
+        { "text": "Cuboid A", "attachTo": "A", "offset": [0, 5, 0], "style": "name" }
+      ],
+      "dimensions": [
+        { "from": [-1.5, 0, 2.5], "to": [1.5, 0, 2.5], "label": "w = 3" },
+        { "from": [1.5, 0, 2.5], "to": [1.5, 4, 2.5], "label": "h = 4" },
+        { "from": [1.5, 0, -2.5], "to": [1.5, 0, 2.5], "label": "d = 5" }
+      ],
+      "camera": { "position": [10, 7, 10], "target": [0, 2, 0] },
+      "answer": {
+        "value": 94,
+        "unit": "square units",
+        "formula": "SA = 2(wh + wd + hd)",
+        "steps": [
+          { "text": "A cuboid has 3 pairs of rectangular faces.", "formula": "", "highlightObjects": ["A"] },
+          { "text": "SA = 2(wh + wd + hd) = 2(3*4 + 3*5 + 4*5).", "formula": "SA = 2(wh + wd + hd)", "highlightObjects": ["A"] },
+          { "text": "SA = 2(12 + 15 + 20) = 2(47) = 94 square units.", "formula": "SA = 2(47) = 94", "highlightObjects": ["A"] }
+        ]
+      }
+    },
+    "expectedAnswer": 94,
+    "tolerance": 0.01,
+    "hints": ["SA = 2(wh + wd + hd)", "Calculate each pair: 3*4, 3*5, 4*5"],
+    "successMessage": "Correct! SA = 2(12 + 15 + 20) = 2(47) = 94 square units."
+  },
+  {
+    "id": "inscribed-1",
+    "title": "Inscribed Sphere in Cube",
+    "difficulty": "hard",
+    "category": "spatial",
+    "question": "A sphere is inscribed in a cube of side 6. What fraction of the cube's volume does the sphere occupy? Give the answer as a decimal rounded to 4 decimal places.",
+    "sceneSpec": {
+      "question": "A sphere is inscribed in a cube of side 6. What fraction of the cube's volume does the sphere occupy?",
+      "questionType": "spatial",
+      "objects": [
+        {
+          "id": "A",
+          "shape": "cube",
+          "params": { "size": 6 },
+          "position": [0, 3, 0],
+          "rotation": [0, 0.3, 0],
+          "color": "#7cf7e4",
+          "highlight": false
+        },
+        {
+          "id": "B",
+          "shape": "sphere",
+          "params": { "radius": 3 },
+          "position": [0, 3, 0],
+          "rotation": [0, 0, 0],
+          "color": "#ff7ca8",
+          "highlight": false
+        }
+      ],
+      "labels": [
+        { "text": "Cube A (s=6)", "attachTo": "A", "offset": [0, 5, 0], "style": "name" },
+        { "text": "Sphere B (r=3)", "attachTo": "B", "offset": [4, 0, 0], "style": "name" }
+      ],
+      "dimensions": [],
+      "camera": { "position": [12, 9, 12], "target": [0, 3, 0] },
+      "answer": {
+        "value": 0.5236,
+        "unit": "",
+        "formula": "fraction = V_sphere / V_cube = pi/6",
+        "steps": [
+          { "text": "An inscribed sphere touches all 6 faces. Its diameter equals the cube side, so r = s/2 = 3.", "formula": "r = s/2 = 3", "highlightObjects": ["A", "B"] },
+          { "text": "V_cube = s^3 = 216.", "formula": "V_cube = 216", "highlightObjects": ["A"] },
+          { "text": "V_sphere = (4/3)*pi*r^3 = (4/3)*pi*27 = 36*pi = 113.097.", "formula": "V_sphere = 36*pi", "highlightObjects": ["B"] },
+          { "text": "Fraction = V_sphere / V_cube = 36*pi / 216 = pi/6 = 0.5236.", "formula": "pi/6 = 0.5236", "highlightObjects": ["A", "B"] }
+        ]
+      }
+    },
+    "expectedAnswer": 0.5236,
+    "tolerance": 0.001,
+    "hints": ["The inscribed sphere's diameter equals the cube's side", "Find V_sphere/V_cube = (4/3)*pi*r^3 / s^3"],
+    "successMessage": "Correct! The sphere occupies pi/6 = 0.5236 of the cube's volume."
+  },
+  {
+    "id": "cone-volume-1",
+    "title": "Volume of a Cone",
+    "difficulty": "medium",
+    "category": "volume",
+    "question": "Find the volume of a cone with radius 4 and height 9. Round to two decimal places.",
+    "sceneSpec": {
+      "question": "Find the volume of a cone with radius 4 and height 9.",
+      "questionType": "volume",
+      "objects": [
+        {
+          "id": "A",
+          "shape": "cone",
+          "params": { "radius": 4, "height": 9 },
+          "position": [0, 4.5, 0],
+          "rotation": [0, 0, 0],
+          "color": "#ffd966",
+          "highlight": true
+        }
+      ],
+      "labels": [
+        { "text": "r = 4", "attachTo": "A", "offset": [4.5, -3, 0], "style": "dimension" },
+        { "text": "h = 9", "attachTo": "A", "offset": [-3, 0, 0], "style": "dimension" },
+        { "text": "Cone A", "attachTo": "A", "offset": [0, 6, 0], "style": "name" }
+      ],
+      "dimensions": [
+        { "from": [0, 0, 0], "to": [4, 0, 0], "label": "r = 4" },
+        { "from": [0, 0, 0], "to": [0, 9, 0], "label": "h = 9" }
+      ],
+      "camera": { "position": [12, 10, 12], "target": [0, 4, 0] },
+      "answer": {
+        "value": 150.8,
+        "unit": "cubic units",
+        "formula": "V = (1/3)*pi*r^2*h",
+        "steps": [
+          { "text": "The volume of a cone is one-third the volume of a cylinder with the same base and height.", "formula": "", "highlightObjects": ["A"] },
+          { "text": "V = (1/3)*pi*r^2*h = (1/3)*pi*16*9.", "formula": "V = (1/3)*pi*r^2*h", "highlightObjects": ["A"] },
+          { "text": "V = (1/3)*pi*144 = 48*pi = 150.80 cubic units.", "formula": "V = 48*pi = 150.80", "highlightObjects": ["A"] }
+        ]
+      }
+    },
+    "expectedAnswer": 150.8,
+    "tolerance": 0.1,
+    "hints": ["V_cone = (1/3) * pi * r^2 * h", "It's one-third of the volume of a cylinder with the same dimensions"],
+    "successMessage": "Correct! V = (1/3)*pi*16*9 = 48*pi = 150.80 cubic units."
+  }
+]
