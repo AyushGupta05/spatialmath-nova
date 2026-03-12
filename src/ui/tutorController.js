@@ -15,6 +15,7 @@ let world = null;
 let cameraDirector = null;
 let currentMeshes = null; // Map<string, Mesh>
 let currentSpec = null;
+let pendingSpec = null; // For scene plan workflow
 
 // DOM refs (set in init)
 let questionInput, questionSubmit, questionStatus;
@@ -24,6 +25,7 @@ let stepIndicator, stepLabel, stepPrev, stepNext;
 let challengeList, scoreDisplay;
 let answerSection, answerInput, answerSubmit, answerFeedback;
 let sceneInfo, objectCount;
+let scenePlanSection, planSummary, planObjects, addAllBtn, stepByStepBtn, buildManuallyBtn;
 let voiceToggle;
 let voiceEnabled = false;
 
@@ -60,10 +62,16 @@ export function initTutorController(worldRef) {
   sceneInfo = document.getElementById("sceneInfo");
   objectCount = document.getElementById("objectCount");
   voiceToggle = document.getElementById("voiceToggle");
+  scenePlanSection = document.getElementById("scenePlanSection");
+  planSummary = document.getElementById("planSummary");
+  planObjects = document.getElementById("planObjects");
+  addAllBtn = document.getElementById("addAllBtn");
+  stepByStepBtn = document.getElementById("stepByStepBtn");
+  buildManuallyBtn = document.getElementById("buildManuallyBtn");
 
   bindEvents();
   loadChallenges();
-  setupModeToggle();
+  setupTabNavigation();
   initToastContainer();
 
   // Subscribe to tutor state changes
@@ -117,29 +125,33 @@ function bindEvents() {
     voiceToggle.classList.toggle("is-active", voiceEnabled);
   });
 
+  // Scene plan buttons
+  addAllBtn?.addEventListener("click", handleAddAll);
+  stepByStepBtn?.addEventListener("click", handleStepByStep);
+  buildManuallyBtn?.addEventListener("click", handleBuildManually);
+
   // Demo button
   document.getElementById("demoBtn")?.addEventListener("click", () => runDemoMode());
 }
 
-function setupModeToggle() {
-  const modeTutor = document.getElementById("modeTutor");
-  const modeSandbox = document.getElementById("modeSandbox");
-  const appShell = document.querySelector(".app-shell");
+function setupTabNavigation() {
+  const tabButtons = document.querySelectorAll(".panel-tab");
+  const tabContents = document.querySelectorAll(".tab-content");
 
-  modeTutor?.addEventListener("click", () => {
-    appShell.dataset.mode = "tutor";
-    modeTutor.classList.add("is-active");
-    modeSandbox.classList.remove("is-active");
-    modeTutor.setAttribute("aria-selected", "true");
-    modeSandbox.setAttribute("aria-selected", "false");
-  });
+  tabButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tabName = btn.dataset.tab;
 
-  modeSandbox?.addEventListener("click", () => {
-    appShell.dataset.mode = "sandbox";
-    modeSandbox.classList.add("is-active");
-    modeTutor.classList.remove("is-active");
-    modeSandbox.setAttribute("aria-selected", "true");
-    modeTutor.setAttribute("aria-selected", "false");
+      // Update buttons
+      tabButtons.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+
+      // Update content
+      tabContents.forEach((content) => {
+        content.classList.remove("active");
+      });
+      document.querySelector(`.tab-content[data-content="${tabName}"]`)?.classList.add("active");
+    });
   });
 }
 
@@ -159,37 +171,20 @@ async function handleQuestionSubmit() {
     tutorState.setSceneSpec(sceneSpec);
     tutorState.setPhase("scene_ready");
 
+    // Store the spec for the plan buttons to use
+    pendingSpec = sceneSpec;
+
     // Clear previous scene
     clearCurrentScene();
 
-    // Build new scene
-    const result = buildSceneFromSpec(sceneSpec, world);
-    currentMeshes = result.meshes;
-    currentSpec = result.spec;
-
-    // Add labels
-    addLabelsFromSpec(world.scene, result.spec, currentMeshes);
-
-    // Animate camera
-    if (result.spec.camera) {
-      animateCamera(result.spec.camera.position, result.spec.camera.target);
-    }
-
-    // Update UI
-    updateSceneInfo(result.spec);
-    updateObjectCount(currentMeshes.size);
-    setQuestionStatus("", "hidden");
-
-    // Add welcome message to chat
+    // Clear chat and show tutor intro
     clearChat();
-    addChatMessage("system", `Scene generated for: "${question}"`);
-    addChatMessage("tutor", `I've created a 3D scene for your problem. ${result.spec.answer?.steps?.length ? `There are ${result.spec.answer.steps.length} steps to solve this. Click "Explain Step" or use the step navigator to walk through the solution.` : "Feel free to ask me anything about this problem!"}`);
+    addChatMessage("system", `Processing: "${question}"`);
+    addChatMessage("tutor", `I've analyzed your geometry problem. I can help you understand the ${sceneSpec.questionType || "concept"} step by step. Choose how you'd like to proceed below.`);
 
-    // Show step indicator if there are steps
-    if (result.spec.answer?.steps?.length > 0) {
-      showStepIndicator(result.spec.answer.steps.length);
-      tutorState.setPhase("walkthrough");
-    }
+    // Show scene plan
+    showScenePlan(sceneSpec);
+    setQuestionStatus("", "hidden");
 
   } catch (err) {
     console.error("Question parse error:", err);
@@ -199,6 +194,89 @@ async function handleQuestionSubmit() {
   } finally {
     questionSubmit.disabled = false;
   }
+}
+
+// ============ SCENE PLAN HANDLING ============
+
+function showScenePlan(sceneSpec) {
+  if (!scenePlanSection) return;
+
+  // Generate summary from question
+  const summary = sceneSpec.question || "Geometry problem";
+  planSummary.textContent = summary;
+
+  // List objects
+  planObjects.innerHTML = "";
+  sceneSpec.objects?.forEach((obj) => {
+    const li = document.createElement("li");
+    const shapeName = obj.shape.charAt(0).toUpperCase() + obj.shape.slice(1);
+    const params = Object.entries(obj.params)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(", ");
+    li.textContent = `🔵 ${shapeName}: ${params}`;
+    planObjects.appendChild(li);
+  });
+
+  // Show scene plan section
+  scenePlanSection.classList.remove("hidden");
+}
+
+function buildSceneFromPlan(sceneSpec) {
+  // Clear and build the full scene
+  clearCurrentScene();
+
+  const result = buildSceneFromSpec(sceneSpec, world);
+  currentMeshes = result.meshes;
+  currentSpec = result.spec;
+
+  // Add labels
+  addLabelsFromSpec(world.scene, result.spec, currentMeshes);
+
+  // Animate camera
+  if (result.spec.camera) {
+    animateCamera(result.spec.camera.position, result.spec.camera.target);
+  }
+
+  // Update UI
+  updateSceneInfo(result.spec);
+  updateObjectCount(currentMeshes.size);
+
+  // Hide scene plan
+  scenePlanSection.classList.add("hidden");
+
+  // Show step indicator if there are steps
+  if (result.spec.answer?.steps?.length > 0) {
+    showStepIndicator(result.spec.answer.steps.length);
+    tutorState.setPhase("walkthrough");
+  }
+}
+
+async function handleAddAll() {
+  if (!pendingSpec) return;
+  buildSceneFromPlan(pendingSpec);
+  addChatMessage("tutor", "Great! I've set up the complete scene. Now let's walk through the solution together. Click the step arrows or use the buttons below to explore each step.");
+}
+
+async function handleStepByStep() {
+  if (!pendingSpec) return;
+  // For now, just build all and let them step through
+  // In a full implementation, could add objects one by one
+  buildSceneFromPlan(pendingSpec);
+  addChatMessage("tutor", "Perfect! I'll guide you through each step. Let's start from the beginning.");
+  // Auto-advance to first step
+  setTimeout(() => tutorState.goToStep(0), 500);
+}
+
+async function handleBuildManually() {
+  if (!pendingSpec) return;
+  // Hide the scene plan, switch to scene tab
+  scenePlanSection.classList.add("hidden");
+
+  // Switch to Scene tab
+  const sceneTab = document.querySelector('.panel-tab[data-tab="scene"]');
+  if (sceneTab) sceneTab.click();
+
+  addChatMessage("tutor", "Great! You're in builder mode. Use the Scene tab to create your own 3D representation. I'll verify your understanding as you go. Feel free to ask me any questions!");
 }
 
 // ============ CHAT ============
@@ -498,12 +576,41 @@ function animateCamera(position, target) {
   cameraDirector.animateTo(position, target, 1200);
 }
 
-function speakText(text) {
-  if (!("speechSynthesis" in window)) return;
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 1.0;
-  utterance.pitch = 1.0;
-  speechSynthesis.speak(utterance);
+async function speakText(text) {
+  if (!text) return;
+  try {
+    const res = await fetch("/api/voice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error("voice endpoint error");
+    const data = await res.json();
+
+    if (data.method === "polly" && data.audio) {
+      // Play Polly-synthesized MP3 audio
+      const binary = atob(data.audio);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: data.contentType || "audio/mpeg" });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      await audio.play();
+      return;
+    }
+    // Fallback: browser TTS
+    if ("speechSynthesis" in window) {
+      const utterance = new SpeechSynthesisUtterance(data.text || text);
+      utterance.rate = 1.0;
+      speechSynthesis.speak(utterance);
+    }
+  } catch {
+    // Final fallback: browser TTS
+    if ("speechSynthesis" in window) {
+      speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+    }
+  }
 }
 
 // ============ DEMO MODE ============

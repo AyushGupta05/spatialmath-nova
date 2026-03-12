@@ -3,7 +3,7 @@
  * This is the central data contract between Nova Pro output and the 3D renderer.
  */
 
-const VALID_SHAPES = ["cube", "cuboid", "sphere", "cylinder", "cone", "line"];
+const VALID_SHAPES = ["cube", "cuboid", "sphere", "cylinder", "cone", "pyramid", "plane", "line"];
 const VALID_QUESTION_TYPES = ["volume", "surface_area", "composite", "spatial", "comparison"];
 const VALID_LABEL_STYLES = ["dimension", "name", "formula", "annotation"];
 

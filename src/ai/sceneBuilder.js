@@ -114,6 +114,38 @@ function createMeshFromObjectSpec(obj, world) {
     });
     mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(position[0], position[1] || params.height / 2, position[2]);
+  } else if (shape === "pyramid" && params.base && params.height) {
+    // Build square pyramid with exact dimensions
+    const geometry = new THREE.ConeGeometry(params.base / Math.sqrt(2), params.height, 4);
+    const tone = new THREE.Color(color);
+    const material = new THREE.MeshStandardMaterial({
+      color: tone,
+      roughness: 0.24,
+      metalness: 0.08,
+      emissive: tone.clone().multiplyScalar(0.12),
+      emissiveIntensity: 0.38,
+      transparent: true,
+      opacity: 0.9,
+    });
+    mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(position[0], position[1] || params.height / 2, position[2]);
+  } else if (shape === "plane" && params.width && params.depth) {
+    // Build plane with exact dimensions
+    const geometry = new THREE.PlaneGeometry(params.width, params.depth);
+    const tone = new THREE.Color(color);
+    const material = new THREE.MeshStandardMaterial({
+      color: tone,
+      roughness: 0.24,
+      metalness: 0.08,
+      emissive: tone.clone().multiplyScalar(0.12),
+      emissiveIntensity: 0.18,
+      transparent: true,
+      opacity: 0.75,
+      side: THREE.DoubleSide,
+    });
+    mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.x = -Math.PI / 2; // Rotate to be horizontal
+    mesh.position.set(position[0], position[1] || 0, position[2]);
   } else {
     // Use the standard buildMesh for cube and fallback
     const size = sceneParamsToMeshSize(shape, params);

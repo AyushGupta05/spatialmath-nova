@@ -13,7 +13,7 @@ Given a geometry question, return a JSON object with EXACTLY this structure (no 
   "objects": [
     {
       "id": "A",
-      "shape": "cube" | "cuboid" | "sphere" | "cylinder" | "cone",
+      "shape": "cube" | "cuboid" | "sphere" | "cylinder" | "cone" | "pyramid" | "plane",
       "params": {
         "size": <number for cube side length>,
         "radius": <number for sphere/cylinder radius>,
@@ -66,10 +66,14 @@ Rules:
 - Place objects near the origin, resting on the ground plane (y=0 is the floor)
 - For cubes/cuboids, the object bottom should touch y=0 (position.y = height/2)
 - For spheres, position.y = radius (resting on ground)
-- For cylinders, position.y = height/2
+- For cylinders/cones/pyramids, position.y = height/2
+- For planes, position.y = 0 (flat on ground)
 - Camera should be positioned to see all objects clearly, typically at [8, 6, 8] looking at [0, 0, 0]
 - Break the answer into clear, numbered steps showing the work
 - Include dimension labels showing key measurements
+- For pyramids, use params: {base: number, height: number}
+- For cones, use params: {radius: number, height: number}
+- For planes, use params: {width: number, depth: number}
 - The "params" field should only include parameters relevant to the shape type
 - Return ONLY valid JSON, no markdown fences, no extra text`;
 

@@ -281,6 +281,9 @@ export function createWorld(container) {
       case "cuboid": geometry = new THREE.BoxGeometry(size * 1.6, size, size * 0.9); break;
       case "sphere": geometry = new THREE.SphereGeometry(size * 0.6, 28, 20); break;
       case "cylinder": geometry = new THREE.CylinderGeometry(size * 0.45, size * 0.45, size * 1.4, 24); break;
+      case "cone": geometry = new THREE.ConeGeometry(size * 0.5, size * 1.2, 32); break;
+      case "pyramid": geometry = new THREE.ConeGeometry(size * 0.71, size, 4); break; // square pyramid
+      case "plane": geometry = new THREE.PlaneGeometry(size * 2, size * 2); break;
       default: geometry = new THREE.BoxGeometry(size, size, size);
     }
 

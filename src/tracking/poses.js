@@ -173,6 +173,27 @@ export function isDirectPinchPose(hand) {
   return pinchRatio < 0.28 && pinchFrontOfPalm && thumbLeading && indexLeading;
 }
 
+/**
+ * Compute the wrist twist angle from the knuckle line (index MCP → pinky MCP).
+ * Returns a value in [-π, π] that changes as the wrist pronates/supinates.
+ */
+export function computeWristAngle(hand) {
+  if (!hand) return null;
+  const indexMcp = hand[5];
+  const pinkyMcp = hand[17];
+  if (!indexMcp || !pinkyMcp) return null;
+  return Math.atan2(pinkyMcp.y - indexMcp.y, pinkyMcp.x - indexMcp.x);
+}
+
+/**
+ * Palm-open pose: hand is visible but not fisting and not pinching.
+ * Used to activate wrist-rotation mode for a selected object.
+ */
+export function isPalmOpenPose(hand) {
+  if (!hand) return false;
+  return !isFistPose(hand) && !isDirectPinchPose(hand);
+}
+
 export function isLinePointPinchPose(hand) {
   if (!hand) return false;
   const scale = palmScale(hand);

@@ -21,7 +21,7 @@
     </script>
   </head>
   <body>
-    <main class="app-shell" data-mode="tutor">
+    <main class="app-shell">
 
       <!-- ============ TOP BAR ============ -->
       <header class="topbar">
@@ -31,10 +31,6 @@
         </div>
 
         <div class="topbar-tools">
-          <div class="mode-toggle" role="tablist" aria-label="App mode">
-            <button id="modeTutor" class="mode-btn is-active" role="tab" aria-selected="true">Tutor</button>
-            <button id="modeSandbox" class="mode-btn" role="tab" aria-selected="false">Sandbox</button>
-          </div>
           <button id="demoBtn" class="mode-btn demo-btn" type="button">Demo</button>
 
           <div class="tool-cluster" aria-label="Primary tools">
@@ -152,94 +148,179 @@
       <!-- ============ WORKSPACE ============ -->
       <section class="workspace">
 
-        <!-- LEFT PANEL: Question Input + Challenges + Sandbox -->
+        <!-- LEFT PANEL: Single sidebar with tabs -->
         <aside class="left-panel">
 
-          <!-- QUESTION INPUT (Tutor Mode) -->
-          <section class="question-section" id="questionSection">
-            <div class="card-heading">
-              <h2>Ask a Question</h2>
-              <span class="pill subtle">Nova</span>
-            </div>
-            <div class="question-input-wrap">
-              <textarea
-                id="questionInput"
-                class="question-textarea"
-                placeholder="Describe a geometry problem...&#10;e.g. &quot;What is the volume of a cylinder with radius 3 and height 7?&quot;"
-                rows="3"
-              ></textarea>
-              <button id="questionSubmit" class="question-submit-btn" type="button">
-                <span class="submit-icon">&#10148;</span>
-                <span>Ask Nova</span>
-              </button>
-            </div>
-            <div id="questionStatus" class="question-status hidden"></div>
-          </section>
+          <!-- Tab Navigation -->
+          <nav class="panel-tabs">
+            <button class="panel-tab active" data-tab="tutor">Tutor</button>
+            <button class="panel-tab" data-tab="scene">Scene</button>
+          </nav>
 
-          <!-- CHALLENGES (Tutor Mode) -->
-          <section class="challenge-section" id="challengeSection">
-            <div class="card-heading">
-              <h2>Challenges</h2>
-              <span id="scoreDisplay" class="pill">Score: 0</span>
-            </div>
-            <div id="challengeList" class="challenge-list">
-              <p class="muted-text">Loading challenges...</p>
-            </div>
-          </section>
+          <!-- TUTOR TAB CONTENT -->
+          <div class="tab-content active" data-content="tutor">
 
-          <!-- SCENE INFO -->
-          <section class="scene-info-section" id="sceneInfoSection">
-            <div class="card-heading">
-              <h2>Scene</h2>
-              <span id="objectCount" class="pill">0</span>
-            </div>
-            <div id="sceneInfo" class="scene-info">
-              <p class="muted-text">Ask a question or pick a challenge to generate a 3D scene.</p>
-            </div>
-          </section>
-
-          <!-- SANDBOX TOOLS (collapsed in Tutor mode) -->
-          <section class="sandbox-section" id="sandboxSection">
-            <details class="sandbox-details">
-              <summary class="sandbox-toggle">
-                <h2>Sandbox Tools</h2>
-                <span class="pill subtle">Editor</span>
-              </summary>
-
-              <div class="sandbox-tools-content">
-                <section class="algebra-card controls-card">
-                  <label class="field">
-                    <span>Shape</span>
-                    <select id="shapeType">
-                      <option value="cube">Cube</option>
-                      <option value="cuboid">Cuboid</option>
-                      <option value="sphere">Sphere</option>
-                      <option value="cylinder">Cylinder</option>
-                      <option value="line">Line</option>
-                    </select>
-                  </label>
-                  <label class="field">
-                    <span>Color</span>
-                    <input id="colorInput" type="color" value="#7cf7e4" />
-                  </label>
-                </section>
-
-                <section class="algebra-card status-card">
-                  <p id="status" class="status" data-state="idle">Idle</p>
-                  <p id="intentBadge" class="status" data-state="idle">Intent: waiting</p>
-                </section>
-
-                <section class="algebra-card object-card">
-                  <div class="card-heading">
-                    <h2>Objects</h2>
-                  </div>
-                  <div id="objectList" class="object-list"></div>
-                </section>
+            <!-- Question Input -->
+            <section class="question-section">
+              <div class="card-heading">
+                <h2>Ask a Question</h2>
+                <span class="pill subtle">Nova</span>
               </div>
-            </details>
-          </section>
+              <div class="question-input-wrap">
+                <textarea
+                  id="questionInput"
+                  class="question-textarea"
+                  placeholder="Describe a geometry problem...&#10;e.g. &quot;What is the volume of a cylinder with radius 3 and height 7?&quot;"
+                  rows="3"
+                ></textarea>
+                <button id="questionSubmit" class="question-submit-btn" type="button">
+                  <span class="submit-icon">&#10148;</span>
+                  <span>Ask Nova</span>
+                </button>
+              </div>
+              <div id="questionStatus" class="question-status hidden"></div>
+            </section>
 
-          <pre id="debugState" class="debug-box hidden">{ "handsDetected": false }</pre>
+            <!-- Scene Plan Panel (initially hidden) -->
+            <section id="scenePlanSection" class="scene-plan-section hidden">
+              <div class="card-heading">
+                <h2>Suggested Scene</h2>
+              </div>
+              <div class="scene-plan">
+                <div id="planSummary" class="plan-summary"></div>
+                <ul id="planObjects" class="plan-objects"></ul>
+                <div class="plan-actions">
+                  <button id="addAllBtn" class="plan-btn btn-primary">Add All</button>
+                  <button id="stepByStepBtn" class="plan-btn btn-secondary">Step by Step</button>
+                  <button id="buildManuallyBtn" class="plan-btn btn-ghost">Build Manually</button>
+                </div>
+              </div>
+            </section>
+
+            <!-- Challenges -->
+            <section class="challenge-section" id="challengeSection">
+              <div class="card-heading">
+                <h2>Challenges</h2>
+                <span id="scoreDisplay" class="pill">Score: 0</span>
+              </div>
+              <div id="challengeList" class="challenge-list">
+                <p class="muted-text">Loading challenges...</p>
+              </div>
+            </section>
+
+            <!-- Chat Messages -->
+            <section class="chat-section">
+              <div id="chatMessages" class="chat-messages">
+                <div class="chat-welcome">
+                  <p class="chat-welcome-title">Welcome to SpatialMath Nova</p>
+                  <p class="chat-welcome-text">Ask a geometry question to get started. I'll create a 3D scene and guide you through the solution step by step.</p>
+                </div>
+              </div>
+
+              <!-- Tutor Actions -->
+              <div class="tutor-actions" id="tutorActions">
+                <button id="hintBtn" class="tutor-action-btn hint-btn" type="button">
+                  <span>Hint</span>
+                  <span id="hintCount" class="hint-count">(3 left)</span>
+                </button>
+                <button id="explainBtn" class="tutor-action-btn" type="button">Explain Step</button>
+                <button id="voiceToggle" class="tutor-action-btn voice-btn" type="button" title="Toggle voice">
+                  <span>🔊 Voice</span>
+                </button>
+              </div>
+
+              <!-- Chat Input -->
+              <div class="chat-input-wrap">
+                <input
+                  id="chatInput"
+                  class="chat-input"
+                  type="text"
+                  placeholder="Ask the tutor..."
+                  autocomplete="off"
+                />
+                <button id="chatSend" class="chat-send-btn" type="button">&#10148;</button>
+              </div>
+
+              <!-- Answer Input for Challenges -->
+              <div id="answerSection" class="answer-section hidden">
+                <div class="answer-input-wrap">
+                  <input
+                    id="answerInput"
+                    class="answer-input"
+                    type="number"
+                    step="any"
+                    placeholder="Your answer..."
+                  />
+                  <button id="answerSubmit" class="answer-submit-btn" type="button">Check</button>
+                </div>
+                <div id="answerFeedback" class="answer-feedback hidden"></div>
+              </div>
+            </section>
+
+          </div>
+
+          <!-- SCENE TAB CONTENT -->
+          <div class="tab-content" data-content="scene">
+
+            <!-- Scene Info -->
+            <section class="scene-info-section">
+              <div class="card-heading">
+                <h2>Scene</h2>
+                <span id="objectCount" class="pill">0</span>
+              </div>
+              <div id="sceneInfo" class="scene-info">
+                <p class="muted-text">Ask a question or pick a challenge to generate a 3D scene.</p>
+              </div>
+            </section>
+
+            <!-- Shape Controls -->
+            <section class="shape-controls-section">
+              <div class="card-heading">
+                <h2>Create Object</h2>
+              </div>
+              <div class="shape-controls">
+                <label class="field">
+                  <span>Shape</span>
+                  <select id="shapeType">
+                    <option value="cube">Cube</option>
+                    <option value="cuboid">Cuboid</option>
+                    <option value="sphere">Sphere</option>
+                    <option value="cylinder">Cylinder</option>
+                    <option value="cone">Cone</option>
+                    <option value="pyramid">Pyramid</option>
+                    <option value="plane">Plane</option>
+                    <option value="line">Line</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Color</span>
+                  <input id="colorInput" type="color" value="#7cf7e4" />
+                </label>
+              </div>
+            </section>
+
+            <!-- Status -->
+            <section class="status-section">
+              <div class="card-heading">
+                <h2>Status</h2>
+              </div>
+              <p id="status" class="status" data-state="idle">Idle</p>
+              <p id="intentBadge" class="status" data-state="idle">Intent: waiting</p>
+            </section>
+
+            <!-- Object List -->
+            <section class="object-section">
+              <div class="card-heading">
+                <h2>Objects</h2>
+              </div>
+              <div id="objectList" class="object-list"></div>
+            </section>
+
+            <!-- Debug -->
+            <pre id="debugState" class="debug-box hidden">{ "handsDetected": false }</pre>
+
+          </div>
+
         </aside>
 
         <!-- CENTER: 3D Viewport -->
@@ -262,59 +343,6 @@
             </div>
           </div>
         </section>
-
-        <!-- RIGHT PANEL: Tutor Chat -->
-        <aside class="tutor-panel" id="tutorPanel">
-          <div class="tutor-header">
-            <h2>Nova Tutor</h2>
-            <div class="tutor-header-actions">
-              <button id="voiceToggle" class="tutor-icon-btn" type="button" title="Toggle voice">
-                <span>&#128266;</span>
-              </button>
-            </div>
-          </div>
-
-          <div id="chatMessages" class="chat-messages">
-            <div class="chat-welcome">
-              <p class="chat-welcome-title">Welcome to SpatialMath Nova</p>
-              <p class="chat-welcome-text">Ask a geometry question to get started. I'll create a 3D scene and guide you through the solution step by step.</p>
-            </div>
-          </div>
-
-          <div class="tutor-actions" id="tutorActions">
-            <button id="hintBtn" class="tutor-action-btn hint-btn" type="button">
-              <span>Hint</span>
-              <span id="hintCount" class="hint-count">(3 left)</span>
-            </button>
-            <button id="explainBtn" class="tutor-action-btn" type="button">Explain Step</button>
-          </div>
-
-          <div class="chat-input-wrap">
-            <input
-              id="chatInput"
-              class="chat-input"
-              type="text"
-              placeholder="Ask the tutor..."
-              autocomplete="off"
-            />
-            <button id="chatSend" class="chat-send-btn" type="button">&#10148;</button>
-          </div>
-
-          <!-- Answer input for challenges -->
-          <div id="answerSection" class="answer-section hidden">
-            <div class="answer-input-wrap">
-              <input
-                id="answerInput"
-                class="answer-input"
-                type="number"
-                step="any"
-                placeholder="Your answer..."
-              />
-              <button id="answerSubmit" class="answer-submit-btn" type="button">Check</button>
-            </div>
-            <div id="answerFeedback" class="answer-feedback hidden"></div>
-          </div>
-        </aside>
 
       </section>
     </main>

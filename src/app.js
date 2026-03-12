@@ -9,7 +9,7 @@ import * as THREE from "three";
 import {
   isFistPose, isThumbsUpPose, isThumbsDownPose,
   isPointPose, isDirectPinchPose, isLinePointPinchPose,
-  lmkDist, palmScale,
+  lmkDist, palmScale, computeWristAngle, isPalmOpenPose,
 } from "./tracking/poses.js";
 import {
   HAND_CONNECTIONS, SHOW_HAND_MARKERS, HAND_OVERLAY_SCALE,
@@ -100,6 +100,7 @@ export function bootstrapApp() {
   let pendingTransformCandidate = null;
   let pendingTransformSince = null;
   let rotationSession = null;
+  let wristRotSession = null;
   let activeMesh = null;
   let dragIntent = null;
   let dragSession = null;
@@ -979,6 +980,7 @@ export function bootstrapApp() {
     if (!transformSession && !activeMesh) return;
     transformSession = null;
     rotationSession = null;
+    wristRotSession = null;
     setActiveMesh(null);
     setStatus(statusMsg, "idle");
   }
@@ -2641,6 +2643,33 @@ export function bootstrapApp() {
         rotationSession = null;
         pendingTransformCandidate = null;
         pendingTransformSince = null;
+
+        // Wrist rotation: when an object is selected and palm is open (not pinching/fisting),
+        // twist your wrist to rotate the object around Y axis.
+        if (activeMesh && primary && isPalmOpenPose(primary) && !pinchActive && !placementPreview) {
+          const wristAngle = computeWristAngle(primary);
+          if (wristAngle !== null) {
+            if (!wristRotSession) {
+              wristRotSession = { startAngle: wristAngle, startRotY: activeMesh.rotation.y };
+              setStatus("Wrist rotation: twist to rotate object", "ok");
+            } else {
+              const delta = Math.atan2(
+                Math.sin(wristAngle - wristRotSession.startAngle),
+                Math.cos(wristAngle - wristRotSession.startAngle)
+              );
+              // Scale factor 2 maps wrist twist range to a useful rotation range
+              const targetRot = wristRotSession.startRotY + delta * 2;
+              activeMesh.rotation.y = THREE.MathUtils.lerp(
+                activeMesh.rotation.y, targetRot, TRANSFORM_ROTATION_SMOOTHING
+              );
+              syncSelectionMarker(activeMesh);
+              updateMeshMetadata(activeMesh);
+            }
+          }
+        } else {
+          wristRotSession = null;
+        }
+
         prevPlacementPulseActive = placementPulseActive;
         prevPinch = pinchActive;
         prevPointPose = false;
@@ -3073,6 +3102,29 @@ export function bootstrapApp() {
 
   stageCanvas?.addEventListener("pointerup", finishPointerDrag);
   stageCanvas?.addEventListener("pointercancel", finishPointerDrag);
+
+  // Mouse wheel scaling with Alt+scroll
+  stageCanvas?.addEventListener("wheel", (event) => {
+    if (!event.altKey || !activeMesh || !placedMeshes.includes(activeMesh)) return;
+    event.preventDefault();
+
+    const scaleFactor = event.deltaY > 0 ? 0.95 : 1.05; // Zoom out shrinks, zoom in grows
+    if (activeMesh.userData?.shape === "cube") {
+      const size = (activeMesh.userData.baseSize || 1) * scaleFactor;
+      activeMesh.scale.setScalar(scaleFactor);
+      activeMesh.userData.baseSize = size;
+    } else if (["sphere", "cylinder", "cone", "pyramid"].includes(activeMesh.userData?.shape)) {
+      activeMesh.scale.setScalar(scaleFactor);
+      activeMesh.userData.baseSize = (activeMesh.userData.baseSize || 1) * scaleFactor;
+    } else if (activeMesh.userData?.shape === "cuboid") {
+      activeMesh.scale.setScalar(scaleFactor);
+      activeMesh.userData.baseSize = (activeMesh.userData.baseSize || 1) * scaleFactor;
+    }
+
+    syncSelectionMarker(activeMesh);
+    updateMeshMetadata(activeMesh);
+    setStatus(`Scaled to ${(activeMesh.userData.baseSize || 1).toFixed(2)}`, "ok");
+  });
   stageCanvas?.addEventListener("contextmenu", (event) => {
     event.preventDefault();
     const stationaryClick = Boolean(
@@ -3103,6 +3155,33 @@ export function bootstrapApp() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       closeMousePlaceMenu();
+      // Deselect current object
+      if (activeMesh) {
+        setActiveMesh(null);
+      }
+    }
+    if (event.key === "Delete" || event.key === "Backspace") {
+      // Delete selected object
+      if (activeMesh && placedMeshes.includes(activeMesh)) {
+        event.preventDefault();
+        const idx = placedMeshes.indexOf(activeMesh);
+        if (idx > -1) {
+          const mesh = placedMeshes[idx];
+          placedMeshes.splice(idx, 1);
+          world.scene.remove(mesh);
+          if (mesh.geometry) mesh.geometry.dispose();
+          if (mesh.material) {
+            if (Array.isArray(mesh.material)) {
+              mesh.material.forEach(m => m.dispose());
+            } else {
+              mesh.material.dispose();
+            }
+          }
+          setActiveMesh(null);
+          setStatus("Object deleted", "ok");
+          renderObjectList();
+        }
+      }
     }
   });
 

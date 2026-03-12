@@ -50,6 +50,38 @@ export function computeGeometry(shape, params) {
         surfaceArea: 0,
       };
     }
+    case "cone": {
+      const r = Number(params.r ?? params.radius ?? 1);
+      const h = Number(params.h ?? params.height ?? params.size ?? 1);
+      const slant = Math.sqrt(r * r + h * h);
+      return {
+        shape,
+        labels: { r, h },
+        volume: (1 / 3) * PI * r * r * h,
+        surfaceArea: PI * r * (r + slant),
+      };
+    }
+    case "pyramid": {
+      const base = Number(params.base ?? params.size ?? 1);
+      const h = Number(params.h ?? params.height ?? 1);
+      const slant = Math.sqrt((base / 2) * (base / 2) + h * h);
+      return {
+        shape,
+        labels: { base, h },
+        volume: (1 / 3) * base * base * h,
+        surfaceArea: base * base + 2 * base * slant,
+      };
+    }
+    case "plane": {
+      const w = Number(params.w ?? params.width ?? 4);
+      const d = Number(params.d ?? params.depth ?? 4);
+      return {
+        shape,
+        labels: { w, d },
+        volume: 0,
+        surfaceArea: w * d,
+      };
+    }
     default:
       return computeGeometry("cube", { a: 1 });
   }
