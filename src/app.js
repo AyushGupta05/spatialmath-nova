@@ -119,6 +119,8 @@ export function bootstrapApp() {
   let secondaryClickIntent = null;
   let mousePlaceContext = null;
   let placementPreview = null;
+  let guidedScenePreview = null;
+  let focusedSceneObjectIds = new Set();
   const sceneRuntime = createSceneRuntime({ world });
   const sceneEventTarget = new EventTarget();
   const placedMeshes = sceneRuntime.meshes;
@@ -156,6 +158,7 @@ export function bootstrapApp() {
       selectionRing.material.opacity = 0.95;
       rotationGuide.visible = false;
       renderObjectList();
+      updateTutorFocusVisuals();
       sceneEventTarget.dispatchEvent(new CustomEvent("selection", {
         detail: { objectId: null, mesh: null },
       }));
@@ -176,6 +179,7 @@ export function bootstrapApp() {
     syncSelectionMarker(activeMesh);
     rotationGuide.visible = false;
     renderObjectList();
+    updateTutorFocusVisuals();
     sceneEventTarget.dispatchEvent(new CustomEvent("selection", {
       detail: {
         objectId: activeMesh.userData?.sceneObjectId || null,
@@ -371,6 +375,136 @@ export function bootstrapApp() {
       placementPreview.pointMarker.material?.dispose?.();
     }
     placementPreview = null;
+  }
+
+  function disposeGuidedScenePreview() {
+    if (!guidedScenePreview?.mesh) {
+      guidedScenePreview = null;
+      return;
+    }
+    world.scene.remove(guidedScenePreview.mesh);
+    guidedScenePreview.mesh.geometry?.dispose?.();
+    guidedScenePreview.mesh.material?.dispose?.();
+    guidedScenePreview = null;
+  }
+
+  function applyGuidedPreviewAppearance(mesh) {
+    if (!mesh?.material) return;
+    mesh.material.transparent = true;
+    mesh.material.opacity = Math.min(mesh.userData?.baseOpacity ?? 0.9, 0.26);
+    mesh.material.depthWrite = false;
+    if (mesh.material.emissive) {
+      mesh.material.emissive.setRGB(0.32, 0.52, 0.72);
+    }
+  }
+
+  function meshMatchesTutorTarget(mesh, targetId) {
+    if (!mesh || !targetId) return false;
+    const metadata = mesh.userData?.sceneMetadata || {};
+    return (
+      mesh.userData?.sceneObjectId === targetId
+      || metadata.sourceSuggestionId === targetId
+      || metadata.suggestionId === targetId
+      || metadata.guidedObjectId === targetId
+      || mesh.userData?.label === targetId
+    );
+  }
+
+  function restoreMeshVisualState(mesh) {
+    if (!mesh?.material) return;
+    const baseOpacity = mesh.userData?.baseOpacity ?? (mesh.userData?.shape === "plane" ? 0.72 : 0.9);
+    const faded = Boolean(mesh.userData?.containsNestedObject);
+    mesh.material.transparent = true;
+    mesh.material.opacity = faded ? Math.min(baseOpacity, 0.38) : baseOpacity;
+    mesh.material.depthWrite = !faded;
+    if (mesh.material.emissive) {
+      const baseEmissive = mesh.userData?.baseEmissive ?? mesh.material.emissive.getHex();
+      mesh.material.emissive.setHex(mesh === activeMesh ? 0xffc857 : baseEmissive);
+    }
+  }
+
+  function updateTutorFocusVisuals() {
+    for (const mesh of placedMeshes) {
+      restoreMeshVisualState(mesh);
+    }
+
+    if (!focusedSceneObjectIds.size) {
+      return;
+    }
+
+    for (const mesh of placedMeshes) {
+      const isTarget = [...focusedSceneObjectIds].some((targetId) => meshMatchesTutorTarget(mesh, targetId));
+      if (isTarget) {
+        if (mesh.material?.emissive && mesh !== activeMesh) {
+          mesh.material.emissive.setRGB(0.44, 0.7, 0.94);
+        }
+        continue;
+      }
+
+      if (mesh.material) {
+        mesh.material.transparent = true;
+        mesh.material.opacity = Math.min(mesh.userData?.baseOpacity ?? 0.9, 0.16);
+        mesh.material.depthWrite = false;
+      }
+    }
+  }
+
+  function focusSceneObjects(targetIds = [], options = {}) {
+    focusedSceneObjectIds = new Set((targetIds || []).filter(Boolean));
+    updateTutorFocusVisuals();
+
+    if (options.selectFirst) {
+      const focusMesh = placedMeshes.find((mesh) => [...focusedSceneObjectIds].some((targetId) => meshMatchesTutorTarget(mesh, targetId)));
+      if (focusMesh) {
+        setActiveMesh(focusMesh);
+      }
+    }
+
+    return [...focusedSceneObjectIds];
+  }
+
+  function clearTutorFocus() {
+    focusedSceneObjectIds = new Set();
+    updateTutorFocusVisuals();
+    return [];
+  }
+
+  function previewSceneAction(action = {}) {
+    const objectSpec = action?.objectSpec || action?.payload?.objectSpec || null;
+    if (!objectSpec) return null;
+
+    disposeGuidedScenePreview();
+    const previewMesh = buildMeshFromSceneObject(world, normalizeSceneObject(objectSpec));
+    applyGuidedPreviewAppearance(previewMesh);
+    world.scene.add(previewMesh);
+    guidedScenePreview = {
+      objectSpec: normalizeSceneObject(objectSpec),
+      mesh: previewMesh,
+      highlightTargets: action?.highlightTargets || action?.payload?.highlightTargets || [],
+    };
+
+    if (guidedScenePreview.highlightTargets.length) {
+      focusSceneObjects(guidedScenePreview.highlightTargets);
+    }
+
+    return guidedScenePreview.objectSpec;
+  }
+
+  function confirmGuidedScenePreview(reason = "place") {
+    if (!guidedScenePreview?.mesh || !guidedScenePreview?.objectSpec) return null;
+    const objectSpec = structuredClone(guidedScenePreview.objectSpec);
+    disposeGuidedScenePreview();
+    const mesh = sceneRuntime.addObject(objectSpec, { reason });
+    updateMeshMetadata(mesh);
+    enforceMeshBudget();
+    updateGeometryMetrics(mesh.userData.shape, mesh.userData.baseSize, mesh);
+    setActiveMesh(mesh);
+    return sceneObjectFromMesh(mesh);
+  }
+
+  function cancelGuidedScenePreview() {
+    disposeGuidedScenePreview();
+    return true;
   }
 
   function buildLinePointMarker(color, point) {
@@ -1648,16 +1782,18 @@ export function bootstrapApp() {
     };
   }
 
-  function handsFrameSelectedMesh(handA, handB, mesh) {
-    if (!handA || !handB || !mesh) return false;
+  function screenFrameMetrics(handA, handB, mesh) {
+    if (!handA || !handB || !mesh) return null;
     const screenPoint = meshScreenPoint(mesh);
-    if (!screenPoint) return false;
+    if (!screenPoint) return null;
 
     const ax = handA.x ?? 0.5;
     const ay = handA.y ?? 0.5;
     const bx = handB.x ?? 0.5;
     const by = handB.y ?? 0.5;
     const segment = segmentMetrics2D(screenPoint.x, screenPoint.y, ax, ay, bx, by);
+    const midpointX = (ax + bx) * 0.5;
+    const midpointY = (ay + by) * 0.5;
     const vecAX = ax - screenPoint.x;
     const vecAY = ay - screenPoint.y;
     const vecBX = bx - screenPoint.x;
@@ -1668,15 +1804,63 @@ export function bootstrapApp() {
       ? (((vecAX * vecBX) + (vecAY * vecBY)) / (lenA * lenB))
       : 1;
     const handSpan = segment.span;
-    const wrapsObject = segment.projection >= 0.12 && segment.projection <= 0.88;
-    const laneWidth = Math.max(0.04, Math.min(0.16, handSpan * 0.28));
+    const wrapsObject = segment.projection >= 0.08 && segment.projection <= 0.92;
+    const laneWidth = Math.max(0.05, Math.min(0.2, handSpan * 0.34));
+    const midpointDist = Math.hypot(midpointX - screenPoint.x, midpointY - screenPoint.y);
+
+    return {
+      screenPoint,
+      segment,
+      handSpan,
+      wrapsObject,
+      laneWidth,
+      midpointDist,
+      oppositionDot,
+    };
+  }
+
+  function handsFrameSelectedMesh(handA, handB, mesh) {
+    const metrics = screenFrameMetrics(handA, handB, mesh);
+    if (!metrics) return false;
 
     return (
-      handSpan >= 0.11 &&
-      wrapsObject &&
-      segment.distance <= laneWidth &&
-      oppositionDot <= 0.45
+      metrics.handSpan >= 0.08 &&
+      metrics.wrapsObject &&
+      metrics.segment.distance <= metrics.laneWidth &&
+      metrics.midpointDist <= Math.max(0.08, metrics.handSpan * 0.45) &&
+      metrics.oppositionDot <= 0.7
     );
+  }
+
+  function pickScreenFramedMesh(handA, handB) {
+    if (!handA || !handB) return null;
+
+    let best = null;
+    let bestScore = Infinity;
+
+    for (const mesh of placedMeshes) {
+      const metrics = screenFrameMetrics(handA, handB, mesh);
+      if (!metrics) continue;
+      if (metrics.handSpan < 0.08 || !metrics.wrapsObject) continue;
+      if (metrics.segment.distance > metrics.laneWidth) continue;
+      if (metrics.midpointDist > Math.max(0.1, metrics.handSpan * 0.48)) continue;
+      if (metrics.oppositionDot > 0.75) continue;
+
+      const score = (
+        metrics.segment.distance * 2.1 +
+        metrics.midpointDist * 1.35 +
+        Math.abs(metrics.segment.projection - 0.5) * 0.25 +
+        (metrics.oppositionDot + 1) * 0.3 -
+        (mesh === activeMesh ? 0.28 : 0)
+      );
+
+      if (score < bestScore) {
+        best = mesh;
+        bestScore = score;
+      }
+    }
+
+    return best;
   }
 
   function pickMeshForTransform(hitA, hitB, handA = null, handB = null) {
@@ -1688,6 +1872,11 @@ export function bootstrapApp() {
       handsFrameSelectedMesh(handA, handB, activeMesh)
     ) {
       return activeMesh;
+    }
+
+    const screenCandidate = pickScreenFramedMesh(handA, handB);
+    if (screenCandidate) {
+      return screenCandidate;
     }
 
     const midpoint = hitA.clone().lerp(hitB, 0.5);
@@ -3457,6 +3646,7 @@ export function bootstrapApp() {
   sceneRuntime.on("objects", () => {
     refreshContainedObjectVisibility();
     renderObjectList();
+    updateTutorFocusVisuals();
     refreshDebug();
   });
 
@@ -3468,16 +3658,23 @@ export function bootstrapApp() {
   const sceneApi = {
     snapshot: () => sceneRuntime.snapshot(),
     loadSnapshot: (snapshot, reason = "snapshot-load") => {
+      disposeGuidedScenePreview();
       sceneRuntime.loadSnapshot(snapshot, reason);
       renderObjectList();
+      updateTutorFocusVisuals();
       refreshDebug();
       return sceneRuntime.snapshot();
     },
-    clearScene: () => clearAll(),
+    clearScene: () => {
+      disposeGuidedScenePreview();
+      clearTutorFocus();
+      return clearAll();
+    },
     addObject: (objectSpec, options = {}) => {
       const mesh = sceneRuntime.addObject(objectSpec, options);
       updateMeshMetadata(mesh);
       renderObjectList();
+      updateTutorFocusVisuals();
       refreshDebug();
       return mesh;
     },
@@ -3485,6 +3682,7 @@ export function bootstrapApp() {
       const meshes = sceneRuntime.addObjects(objectSpecs, options);
       meshes.forEach((mesh) => updateMeshMetadata(mesh));
       renderObjectList();
+      updateTutorFocusVisuals();
       refreshDebug();
       return meshes;
     },
@@ -3494,6 +3692,7 @@ export function bootstrapApp() {
       if (mesh === activeMesh) setActiveMesh(null);
       removeMesh(mesh);
       renderObjectList();
+      updateTutorFocusVisuals();
       refreshDebug();
       return true;
     },
@@ -3505,6 +3704,11 @@ export function bootstrapApp() {
     getObject: (target) => sceneRuntime.getObject(target),
     getMesh: (target) => sceneRuntime.getMesh(target),
     getSelection: () => sceneRuntime.getSelection(),
+    previewAction: (action) => previewSceneAction(action),
+    confirmPreviewAction: () => confirmGuidedScenePreview(),
+    cancelPreviewAction: () => cancelGuidedScenePreview(),
+    focusObjects: (targetIds, options = {}) => focusSceneObjects(targetIds, options),
+    clearFocus: () => clearTutorFocus(),
     resetView: onResetView,
     onSceneChange: (handler) => sceneRuntime.on("change", () => handler(sceneRuntime.snapshot())),
     onSceneEvent: (handler) => sceneRuntime.on("change", handler),

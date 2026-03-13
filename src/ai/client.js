@@ -68,6 +68,7 @@ export async function askTutor({ plan, sceneSnapshot, sceneContext = null, learn
   let buffer = "";
   let fullText = "";
   let latestAssessment = null;
+  let latestMeta = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -83,6 +84,9 @@ export async function askTutor({ plan, sceneSnapshot, sceneContext = null, learn
         fullText += payload.content;
         onChunk?.(payload.content);
       }
+      if (payload.type === "meta" && payload.content) {
+        latestMeta = payload.content;
+      }
       if (payload.type === "assessment" && payload.content) {
         latestAssessment = payload.content;
         onAssessment?.(latestAssessment);
@@ -93,7 +97,7 @@ export async function askTutor({ plan, sceneSnapshot, sceneContext = null, learn
     }
   }
 
-  return { text: fullText, assessment: latestAssessment };
+  return { text: fullText, assessment: latestAssessment, ...latestMeta };
 }
 
 export async function requestVoiceResponse(input, playbackMode = "auto") {

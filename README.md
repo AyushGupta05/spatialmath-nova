@@ -70,18 +70,3 @@ Then open [http://localhost:3000/index.html](http://localhost:3000/index.html).
 npm run lint
 npm test
 ```
-
-## Judge flow
-
-1. Open the app and click `Try Judge Demo`
-2. Let Nova Prism build the lesson from the bundled worksheet-style diagram
-3. Show the extracted source evidence and agent trace
-4. Load the draft scene, then ask a spoken follow-up with `Hold to Talk`
-5. Move an object in the scene and show the live build check
-
-## Submission assets
-
-Supporting hackathon collateral lives in `docs/submission/`:
-- `devpost.md`
-- `video-script.md`
-- `builder-blog.md`

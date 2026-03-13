@@ -5,6 +5,17 @@ const VALID_LIVE_CHALLENGE_METRICS = ["volume", "surfaceArea"];
 const VALID_STEP_ACTIONS = ["add", "verify", "adjust", "observe", "answer"];
 const VALID_INPUT_MODES = ["text", "image", "multimodal"];
 const LESSON_STAGES = ["orient", "build", "predict", "check", "reflect", "challenge"];
+const VALID_TUTOR_ACTION_KINDS = [
+  "start-guided-build",
+  "build-manually",
+  "preview-required-object",
+  "confirm-preview",
+  "cancel-preview",
+  "explain-stage",
+  "skip-stage",
+  "continue-stage",
+  "show-mistake",
+];
 
 function normalizeString(value, fallback = "") {
   return typeof value === "string" ? value : fallback;
@@ -28,6 +39,10 @@ function normalizeInputMode(value, fallback = "text") {
 
 function normalizeLessonStage(value, fallback = "orient") {
   return LESSON_STAGES.includes(value) ? value : fallback;
+}
+
+function normalizeTutorActionKind(value, fallback = "continue-stage") {
+  return VALID_TUTOR_ACTION_KINDS.includes(value) ? value : fallback;
 }
 
 function normalizeSourceSummary(summary = {}, fallbackQuestion = "") {
@@ -111,6 +126,128 @@ function normalizeLearningMoment(moment = {}, stage, defaults = {}) {
     insight: normalizeString(moment.insight, defaults.insight || ""),
     whyItMatters: normalizeString(moment.whyItMatters, defaults.whyItMatters || ""),
   };
+}
+
+function normalizeTutorAction(action = {}, fallback = {}) {
+  return {
+    id: normalizeString(action.id, fallback.id || "tutor-action"),
+    label: normalizeString(action.label, fallback.label || "Continue"),
+    kind: normalizeTutorActionKind(action.kind, fallback.kind || "continue-stage"),
+    payload: action.payload && typeof action.payload === "object"
+      ? structuredClone(action.payload)
+      : structuredClone(fallback.payload || {}),
+  };
+}
+
+function stageActionsForStep(step, suggestionsById, stageIndex = 0) {
+  const primarySuggestion = (step.requiredObjectIds || [])
+    .map((id) => suggestionsById.get(id))
+    .find(Boolean)
+    || (step.suggestedObjectIds || []).map((id) => suggestionsById.get(id)).find(Boolean)
+    || null;
+
+  const actions = [
+    normalizeTutorAction({
+      id: `${step.id}-guided`,
+      label: stageIndex === 0 ? "Start Guided Build" : primarySuggestion ? `Preview ${primarySuggestion.title}` : "Continue",
+      kind: primarySuggestion ? "preview-required-object" : "start-guided-build",
+      payload: primarySuggestion
+        ? {
+          stageId: step.id,
+          suggestionId: primarySuggestion.id,
+          objectSpec: primarySuggestion.object,
+          highlightTargets: [primarySuggestion.object.id],
+        }
+        : { stageId: step.id },
+    }),
+    normalizeTutorAction({
+      id: `${step.id}-manual`,
+      label: "Place Manually",
+      kind: "build-manually",
+      payload: { stageId: step.id },
+    }),
+    normalizeTutorAction({
+      id: `${step.id}-explain`,
+      label: "Explain First",
+      kind: "explain-stage",
+      payload: { stageId: step.id },
+    }),
+    normalizeTutorAction({
+      id: `${step.id}-skip`,
+      label: "Skip",
+      kind: "skip-stage",
+      payload: { stageId: step.id },
+    }),
+  ];
+
+  return actions.slice(0, 4);
+}
+
+function normalizeLessonStageEntry(stage = {}, index = 0, context = {}) {
+  const step = context.buildSteps?.[index] || null;
+  const currentMoment = context.learningMoments?.build || {};
+  const defaultTargets = step?.highlightObjectIds?.length
+    ? step.highlightObjectIds
+    : (step?.requiredObjectIds || [])
+      .map((id) => context.suggestionsById.get(id)?.object?.id)
+      .filter(Boolean);
+  const fallbackActions = step
+    ? stageActionsForStep(step, context.suggestionsById, index)
+    : [normalizeTutorAction({
+      id: `stage-${index + 1}-continue`,
+      label: "Continue",
+      kind: "continue-stage",
+      payload: { stageId: `stage-${index + 1}` },
+    })];
+
+  const providedActions = normalizeArray(stage.suggestedActions).map((action, actionIndex) => {
+    const fallback = fallbackActions[actionIndex] || fallbackActions[0];
+    const normalizedAction = normalizeTutorAction(action, fallback);
+    if (
+      normalizedAction.kind === "preview-required-object"
+      && normalizedAction.payload?.suggestionId
+      && !normalizedAction.payload?.objectSpec
+    ) {
+      const suggestion = context.suggestionsById.get(normalizedAction.payload.suggestionId);
+      if (suggestion) {
+        normalizedAction.payload.objectSpec = suggestion.object;
+      }
+    }
+    return normalizedAction;
+  });
+
+  return {
+    id: normalizeString(stage.id, step?.id || `stage-${index + 1}`),
+    title: normalizeString(stage.title, step?.title || `Stage ${index + 1}`),
+    goal: normalizeString(stage.goal, step?.instruction || currentMoment.goal || ""),
+    tutorIntro: normalizeString(
+      stage.tutorIntro,
+      step?.coachPrompt || step?.hint || currentMoment.coachMessage || "Let's build the next important relationship in the scene."
+    ),
+    successCheck: normalizeString(
+      stage.successCheck,
+      step?.requiredObjectIds?.length
+        ? `This stage is complete when ${step.requiredObjectIds.length === 1 ? "the key object is" : "the key objects are"} visible in the scene.`
+        : "This stage is complete when the key idea is visible in the scene."
+    ),
+    highlightTargets: uniqueStrings(stage.highlightTargets?.length ? stage.highlightTargets : defaultTargets),
+    suggestedActions: providedActions.length ? providedActions : fallbackActions,
+    checkpointPrompt: normalizeString(stage.checkpointPrompt, "Does this look correct?"),
+    freeQuestionAnchor: normalizeString(stage.freeQuestionAnchor, step?.focusConcept || context.sceneFocus?.primaryInsight || ""),
+    mistakeProbe: normalizeString(
+      stage.mistakeProbe,
+      "Show me the mistake in this stage and explain what should be different."
+    ),
+  };
+}
+
+function defaultLessonStages({ buildSteps = [], suggestionsById = new Map(), learningMoments = {}, sceneFocus = {} }) {
+  return buildSteps.map((step, index) => normalizeLessonStageEntry({}, index, {
+    buildSteps,
+    suggestionsById,
+    learningMoments,
+    sceneFocus,
+  }));
 }
 
 function defaultLearningMoments({ question = "", answerScaffold = {}, sceneFocus = {}, buildSteps = [], liveChallenge = null }) {
@@ -319,6 +456,21 @@ export function normalizeScenePlan(plan = {}) {
     stage,
     normalizeLearningMoment(plan.learningMoments?.[stage] || {}, stage, fallbackMoments[stage]),
   ]));
+  const suggestionsById = new Map(objectSuggestions.map((suggestion) => [suggestion.id, suggestion]));
+  const fallbackLessonStages = defaultLessonStages({
+    buildSteps,
+    suggestionsById,
+    learningMoments,
+    sceneFocus,
+  });
+  const lessonStages = normalizeArray(plan.lessonStages).length
+    ? normalizeArray(plan.lessonStages).map((stage, index) => normalizeLessonStageEntry(stage, index, {
+      buildSteps,
+      suggestionsById,
+      learningMoments,
+      sceneFocus,
+    }))
+    : fallbackLessonStages;
 
   return {
     problem: {
@@ -339,6 +491,7 @@ export function normalizeScenePlan(plan = {}) {
     challengePrompts,
     liveChallenge,
     sourceEvidence,
+    lessonStages,
     agentTrace: normalizeAgentTrace(plan.agentTrace),
     demoPreset: normalizeDemoPreset(plan.demoPreset, sceneFocus, sourceSummary),
   };
