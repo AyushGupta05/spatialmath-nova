@@ -11,9 +11,14 @@ import { computeGeometry } from "../core/geometry.js";
 import { initLabelRenderer, renderLabels, addLabel, clearLabels } from "../render/labels.js";
 import { CameraDirector } from "../render/cameraDirector.js";
 import { tutorState } from "../state/tutorState.js";
+import {
+  buildStageConfig,
+  computeLiveChallengeState,
+  createLiveChallengeState,
+  formatNumber,
+} from "./tutorLesson.js";
 import { initUnfoldDrawer, syncUnfoldDrawer } from "./unfoldDrawer.js";
 
-let appContext = null;
 let world = null;
 let sceneApi = null;
 let cameraDirector = null;
@@ -57,7 +62,6 @@ let hintCount;
 let explainBtn;
 let advanceStageBtn;
 let voiceToggle;
-let whyDetails;
 let whyText;
 let transcriptDetails;
 let chatMessages;
@@ -85,22 +89,6 @@ function activePlan() {
 
 function currentSnapshot() {
   return sceneApi?.snapshot?.() || { objects: [], selectedObjectId: null };
-}
-
-function formatNumber(value, digits = 2) {
-  const next = Number(value);
-  if (!Number.isFinite(next)) return "0";
-  return next.toFixed(digits).replace(/\.00$/, "");
-}
-
-function formatMetricName(metric) {
-  return metric === "surfaceArea" ? "surface area" : metric || "metric";
-}
-
-function currentStepAssessment(assessment) {
-  const step = tutorState.getCurrentStep();
-  if (!step || !assessment) return null;
-  return assessment.stepAssessments?.find((item) => item.stepId === step.id) || null;
 }
 
 function selectedSceneObject(snapshot = currentSnapshot()) {
@@ -225,110 +213,20 @@ function renderAnnotations() {
   });
 }
 
-function suggestionTitle(plan, suggestionId) {
-  return plan?.objectSuggestions?.find((suggestion) => suggestion.id === suggestionId)?.title || suggestionId;
-}
-
-function missingSuggestionIds(step, assessment) {
-  if (!step || !assessment) return [];
-  const byId = new Map(assessment.objectAssessments.map((item) => [item.suggestionId, item]));
-  return (step.requiredObjectIds || []).filter((id) => !byId.get(id)?.present);
-}
-
 function resetLiveChallengeState(plan = activePlan()) {
-  const challenge = plan?.liveChallenge || null;
-  liveChallengeState = challenge
-    ? {
-      planId: plan.problem?.id || null,
-      challengeId: challenge.id,
-      unlocked: false,
-      complete: false,
-      primaryObjectId: null,
-      baselineValue: null,
-      targetValue: null,
-      currentValue: null,
-      deltaValue: null,
-      progress: 0,
-      toleranceValue: null,
-    }
-    : null;
-}
-
-function findPrimaryLiveSuggestion(plan) {
-  if (!plan?.liveChallenge) return null;
-  const requiredIds = new Set(plan.buildSteps.flatMap((step) => step.requiredObjectIds || []));
-  return plan.objectSuggestions.find((suggestion) => requiredIds.has(suggestion.id) && suggestion.object.shape !== "line")
-    || plan.objectSuggestions.find((suggestion) => suggestion.object.shape !== "line")
-    || null;
-}
-
-function findObjectForSuggestion(snapshot, suggestion, assessment = null) {
-  if (!snapshot || !suggestion) return null;
-  const matchedObjectId = assessment?.objectAssessments?.find((item) => item.suggestionId === suggestion.id)?.matchedObjectId || null;
-  if (matchedObjectId) {
-    return snapshot.objects.find((objectSpec) => objectSpec.id === matchedObjectId) || null;
-  }
-
-  return snapshot.objects.find((objectSpec) => {
-    const metadata = objectSpec.metadata || {};
-    return (
-      objectSpec.id === suggestion.object.id
-      || metadata.sourceSuggestionId === suggestion.id
-      || metadata.suggestionId === suggestion.id
-      || metadata.guidedObjectId === suggestion.object.id
-    );
-  }) || null;
+  liveChallengeState = createLiveChallengeState(plan);
 }
 
 function computeLiveChallenge(plan, assessment) {
-  const challenge = plan?.liveChallenge;
-  if (!challenge) return null;
-
-  if (!liveChallengeState || liveChallengeState.planId !== plan.problem?.id || liveChallengeState.challengeId !== challenge.id) {
-    resetLiveChallengeState(plan);
-  }
-
-  const snapshot = currentSnapshot();
-  const primarySuggestion = findPrimaryLiveSuggestion(plan);
-  const currentObject = liveChallengeState?.primaryObjectId
-    ? sceneApi.getObject(liveChallengeState.primaryObjectId)
-    : findObjectForSuggestion(snapshot, primarySuggestion, assessment);
-  const currentMetrics = currentObject ? computeGeometry(currentObject.shape, currentObject.params) : null;
-  const currentValue = currentMetrics ? currentMetrics[challenge.metric] : null;
-
-  if (!liveChallengeState.unlocked && assessment?.answerGate?.allowed && currentObject && Number.isFinite(currentValue)) {
-    liveChallengeState.unlocked = true;
-    liveChallengeState.primaryObjectId = currentObject.id;
-    liveChallengeState.baselineValue = currentValue;
-    liveChallengeState.targetValue = currentValue * challenge.multiplier;
-  }
-
-  if (liveChallengeState.unlocked) {
-    const trackedObject = sceneApi.getObject(liveChallengeState.primaryObjectId)
-      || findObjectForSuggestion(snapshot, primarySuggestion, assessment);
-    const trackedMetrics = trackedObject ? computeGeometry(trackedObject.shape, trackedObject.params) : null;
-    const trackedValue = trackedMetrics ? trackedMetrics[challenge.metric] : null;
-    liveChallengeState.primaryObjectId = trackedObject?.id || liveChallengeState.primaryObjectId;
-    liveChallengeState.currentValue = trackedValue;
-    liveChallengeState.deltaValue = Number.isFinite(trackedValue) && Number.isFinite(liveChallengeState.targetValue)
-      ? trackedValue - liveChallengeState.targetValue
-      : null;
-    liveChallengeState.toleranceValue = Number.isFinite(liveChallengeState.targetValue)
-      ? Math.max(0.0001, liveChallengeState.targetValue * challenge.tolerance)
-      : null;
-    liveChallengeState.progress = Number.isFinite(trackedValue) && Number.isFinite(liveChallengeState.targetValue) && liveChallengeState.targetValue > 0
-      ? Math.max(0, Math.min(trackedValue / liveChallengeState.targetValue, 1.25))
-      : 0;
-    liveChallengeState.complete = Number.isFinite(liveChallengeState.deltaValue) && Number.isFinite(liveChallengeState.toleranceValue)
-      ? Math.abs(liveChallengeState.deltaValue) <= liveChallengeState.toleranceValue
-      : false;
-  }
-
-  return {
-    ...challenge,
-    ...liveChallengeState,
-    primarySuggestion,
-  };
+  const result = computeLiveChallengeState({
+    plan,
+    assessment,
+    liveChallengeState,
+    snapshot: currentSnapshot(),
+    getObject: (id) => sceneApi.getObject(id),
+  });
+  liveChallengeState = result.liveChallengeState;
+  return result.liveChallenge;
 }
 
 function renderAssessment(assessment) {
@@ -402,97 +300,18 @@ function updateStepIndicator() {
 }
 
 function stageConfig(plan, assessment) {
-  const stage = tutorState.learningStage;
-  const learningMoment = plan?.learningMoments?.[stage] || {};
-  const step = tutorState.getCurrentStep();
-  const selected = selectedObjectContext();
   const challenge = computeLiveChallenge(plan, assessment);
-  const guidance = assessment?.guidance || {};
-  const missingTitles = guidance.missingTitles || [];
-
-  const config = {
-    stage,
-    headline: learningMoment.title || "Lesson",
-    message: learningMoment.coachMessage || plan?.sceneFocus?.primaryInsight || "Use the scene to reason step by step.",
-    goal: learningMoment.goal || plan?.sceneFocus?.focusPrompt || "Use the scene to focus on the main idea.",
-    feedback: lastSceneFeedback || guidance.coachFeedback || "Nova is waiting for your next action.",
-    why: learningMoment.whyItMatters || plan?.sceneFocus?.primaryInsight || "",
-    advanceLabel: "Continue",
-    showPrediction: false,
-    challengeText: "",
-    showChallenge: false,
-  };
-
-  if (stage === "orient") {
-    config.headline = plan?.sceneFocus?.concept
-      ? `Focus on ${plan.sceneFocus.concept}`
-      : "Orient";
-    config.message = learningMoment.coachMessage || `Start by naming the main object or relationship in this problem.`;
-    config.goal = plan?.sceneFocus?.focusPrompt || learningMoment.goal;
-    config.feedback = `Question -> spatial setup -> student action -> AI feedback -> insight.`;
-    config.advanceLabel = "Start Build";
-    return config;
-  }
-
-  if (stage === "build") {
-    config.headline = step?.title || learningMoment.title || "Build / Inspect";
-    config.message = missingTitles.length
-      ? `Build the scene a piece at a time. ${missingTitles.join(", ")} still need attention.`
-      : guidance.coachFeedback || learningMoment.coachMessage;
-    config.goal = step?.instruction || learningMoment.goal;
-    config.feedback = guidance.coachFeedback || lastSceneFeedback;
-    config.advanceLabel = guidance.readyForPrediction ? "Move to Prediction" : "Keep Building";
-    return config;
-  }
-
-  if (stage === "predict") {
-    config.headline = learningMoment.title || "Predict";
-    config.message = learningMoment.coachMessage || "Pause before solving and make a short prediction.";
-    config.goal = learningMoment.prompt || tutorState.predictionState.prompt || "Make one short prediction from the scene.";
-    config.feedback = selected
-      ? `Use ${selected.label} to ground your prediction.`
-      : "Pick the object or helper that best shows the idea.";
-    config.showPrediction = true;
-    config.advanceLabel = tutorState.predictionState.submitted ? "Check in Scene" : "Save Prediction";
-    return config;
-  }
-
-  if (stage === "check") {
-    config.headline = learningMoment.title || "Check";
-    config.message = selected
-      ? `Check your prediction by inspecting ${selected.label}.`
-      : learningMoment.coachMessage || "Use the scene to test your prediction.";
-    config.goal = learningMoment.goal || "Rotate, select, or adjust the object that controls the idea.";
-    config.feedback = lastSceneFeedback || guidance.coachFeedback;
-    config.advanceLabel = "Reflect";
-    return config;
-  }
-
-  if (stage === "reflect") {
-    config.headline = learningMoment.title || "Reflect";
-    config.message = learningMoment.insight || plan?.sceneFocus?.primaryInsight || "State the key idea in one short sentence.";
-    config.goal = learningMoment.goal || "Summarize what the scene made clearer.";
-    config.feedback = selected
-      ? `${selected.label} now anchors the explanation with visible dimensions.`
-      : guidance.coachFeedback || "The scene is ready to explain.";
-    config.advanceLabel = "Start Challenge";
-    return config;
-  }
-
-  config.headline = challenge?.title || learningMoment.title || "Challenge";
-  config.message = challenge?.prompt || learningMoment.coachMessage || "Try one short follow-up.";
-  config.goal = challenge?.unlocked
-    ? `Target ${formatMetricName(challenge.metric)}: ${formatNumber(challenge.targetValue)}`
-    : learningMoment.goal || "Use one more scene action to reinforce the idea.";
-  config.feedback = challenge?.unlocked
-    ? challenge.complete
-      ? "Challenge complete. Your scene is within the target tolerance."
-      : `Current ${formatMetricName(challenge.metric)}: ${formatNumber(challenge.currentValue)}`
-    : guidance.coachFeedback || "Finish the build to unlock the challenge.";
-  config.showChallenge = true;
-  config.challengeText = challenge?.prompt || learningMoment.prompt || "";
-  config.advanceLabel = activeChallenge ? "Check Answer" : "Keep Exploring";
-  return config;
+  return buildStageConfig({
+    plan,
+    assessment,
+    learningStage: tutorState.learningStage,
+    currentStep: tutorState.getCurrentStep(),
+    predictionState: tutorState.predictionState,
+    selectedObject: selectedObjectContext(),
+    liveChallenge: challenge,
+    lastSceneFeedback,
+    activeChallenge,
+  });
 }
 
 function renderLessonCard() {
@@ -1100,7 +919,6 @@ function bindDom() {
   explainBtn = document.getElementById("explainBtn");
   advanceStageBtn = document.getElementById("advanceStageBtn");
   voiceToggle = document.getElementById("voiceToggle");
-  whyDetails = document.getElementById("whyDetails");
   whyText = document.getElementById("whyText");
   transcriptDetails = document.getElementById("transcriptDetails");
   chatMessages = document.getElementById("chatMessages");
@@ -1124,7 +942,6 @@ function bindDom() {
 }
 
 export function initTutorController(context) {
-  appContext = context;
   world = context.world;
   sceneApi = context.sceneApi;
   cameraDirector = new CameraDirector(world.camera, world.controls);

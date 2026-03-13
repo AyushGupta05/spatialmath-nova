@@ -15,7 +15,7 @@ function parseSceneSnapshot(rawValue) {
   if (typeof rawValue === "string") {
     try {
       return JSON.parse(rawValue);
-    } catch (error) {
+    } catch {
       throw new Error("sceneSnapshot must be valid JSON");
     }
   }

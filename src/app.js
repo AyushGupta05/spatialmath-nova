@@ -23,8 +23,7 @@ import {
 import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
 import * as THREE from "three";
 import {
-  isFistPose, isThumbsUpPose, isThumbsDownPose,
-  isPointPose, isDirectPinchPose, isLinePointPinchPose,
+  isFistPose,
   lmkDist, palmScale, computeWristAngle,
 } from "./tracking/poses.js";
 import {
@@ -39,7 +38,7 @@ import {
   LINE_DEPTH_RAY_GAIN, LINE_DEPTH_MAX_OFFSET, LINE_DEPTH_DEADZONE,
   TRANSFORM_SELECT_BUFFER, TRANSFORM_MIDPOINT_RADIUS_FACTOR, TRANSFORM_OPPOSITION_DOT_MAX,
   MIN_TRANSFORM_SPAN, MIN_MESH_SCALE, MAX_MESH_SCALE,
-  TRANSFORM_LOCK_MS, TRANSFORM_HAND_RETURN_MS,
+  TRANSFORM_LOCK_MS,
   TRANSFORM_SCALE_SMOOTHING, TRANSFORM_ROTATION_SMOOTHING,
   PLACEMENT_PREVIEW_OPACITY, PLACEMENT_SURFACE_GAP, PLACEMENT_COLLISION_TOLERANCE,
   PLACEMENT_NEAR_SNAP_BASE, PLACEMENT_NEAR_SNAP_GAIN, PLACEMENT_SURFACE_NUDGE_LIMIT,
@@ -99,12 +98,10 @@ export function bootstrapApp() {
   let lastInferAt = 0;
   let running = false;
   let prevPinch = false;
-  let prevPointPose = false;
   let prevPlacementPulseActive = false;
   let smoothedPalm = null;
   let smoothedPinch = null;
   let smoothedPrimaryIndex = null;
-  let smoothedSecondaryIndex = null;
   let lastSpawnAt = -SPAWN_COOLDOWN_MS;
   let lastFistDeleteAt = -FIST_DELETE_COOLDOWN_MS;
   let lastOperationAt = -OPERATION_COOLDOWN_MS;
@@ -116,7 +113,6 @@ export function bootstrapApp() {
   let pendingTransformCandidate = null;
   let pendingTransformSince = null;
   let rotationSession = null;
-  let wristRotSession = null;
   let activeMesh = null;
   let dragIntent = null;
   let dragSession = null;
@@ -294,14 +290,6 @@ export function bootstrapApp() {
         ...(overrides.metadata || {}),
       },
     });
-  }
-
-  function applySceneObjectUpdate(mesh, objectSpec, reason = "object-update") {
-    if (!mesh) return null;
-    applySceneObjectToMesh(world, mesh, objectSpec);
-    updateMeshMetadata(mesh);
-    sceneRuntime.notifySceneChanged(reason, mesh);
-    return mesh;
   }
 
   function applySceneParamsUpdate(mesh, params, reason = "params-update") {
@@ -505,7 +493,7 @@ export function bootstrapApp() {
     const inverseMatrix = mesh.matrixWorld.clone().invert();
     const localPoint = point.clone().applyMatrix4(inverseMatrix);
     const localSurface = localPoint.clone().clamp(bbox.min, bbox.max);
-    let localNormal = localPoint.clone().sub(localSurface);
+    const localNormal = localPoint.clone().sub(localSurface);
 
     if (localNormal.lengthSq() <= 1e-8) {
       const xFace = Math.abs(localPoint.x - bbox.min.x) <= Math.abs(localPoint.x - bbox.max.x) ? bbox.min.x : bbox.max.x;
@@ -1274,26 +1262,11 @@ export function bootstrapApp() {
     return true;
   }
 
-  function beginRotationSession(mesh, startAngle, now) {
-    if (!mesh || !Number.isFinite(startAngle)) return false;
-
-    setActiveMesh(mesh);
-    rotationSession = {
-      mesh,
-      startPointerAngle: startAngle,
-      startRotationY: mesh.rotation.y,
-    };
-    selectionRing.userData.pulseStartAt = now;
-    setStatus("Rotation locked: point to turn object", "ok");
-    return true;
-  }
-
   function endTransformSession(statusMsg = "Transform released") {
     const focusMesh = rotationSession?.mesh || transformSession?.mesh || activeMesh;
     if (!focusMesh) return;
     transformSession = null;
     rotationSession = null;
-    wristRotSession = null;
     sceneRuntime.notifySceneChanged("transform-end", focusMesh);
     setActiveMesh(null);
     setStatus(statusMsg, "idle");
@@ -1653,10 +1626,6 @@ export function bootstrapApp() {
     return best;
   }
 
-  function pickDeleteTarget(hitPoint) {
-    return pickReachableMesh(hitPoint, 1.2, -0.18);
-  }
-
   function pickDeleteTargetFromHand(palmHit, pinchHit, indexHit) {
     return (
       pickReachableMesh(pinchHit, 1.55, 0.12) ||
@@ -1665,37 +1634,8 @@ export function bootstrapApp() {
     );
   }
 
-  function pickRotationTarget(pointerHit, fallbackHit, handA = null, handB = null) {
-    if (
-      activeMesh &&
-      placedMeshes.includes(activeMesh) &&
-      handsFrameSelectedMesh(handA, handB, activeMesh)
-    ) {
-      return activeMesh;
-    }
-    const preferredHit = pointerHit || fallbackHit;
-    if (
-      activeMesh &&
-      preferredHit &&
-      planarDistance(activeMesh.position, preferredHit) <= Math.max(0.72, meshSelectionRadius(activeMesh) + 0.12)
-    ) {
-      return activeMesh;
-    }
-    return pickReachableMesh(pointerHit, 1.9, 0.12) || pickReachableMesh(fallbackHit, 1.6, 0.08);
-  }
-
   function shortestAngleDelta(from, to) {
     return Math.atan2(Math.sin(to - from), Math.cos(to - from));
-  }
-
-  function twoHandRotationAngle(indexHitA, indexHitB, handA, handB) {
-    if (indexHitA && indexHitB) {
-      return Math.atan2(indexHitB.z - indexHitA.z, indexHitB.x - indexHitA.x);
-    }
-    if (handA && handB) {
-      return Math.atan2(handB[8].y - handA[8].y, handA[8].x - handB[8].x);
-    }
-    return 0;
   }
 
   function meshScreenPoint(mesh) {
@@ -1824,62 +1764,6 @@ export function bootstrapApp() {
     });
   }
 
-  function classifySignal(primary, interaction) {
-    if (!hand) return false;
-    const scale = palmScale(hand);
-    const wrist = hand[0];
-
-    const tips = [8, 12, 16, 20];
-    const pips = [6, 10, 14, 18];
-    const mcps = [5, 9, 13, 17];
-
-    // 1) Fingertips should sit close to palm center/wrist for a fist
-    const tipToWrist = tips.map((i) => lmkDist(hand[i], wrist) / scale);
-    const avgTipToWrist = tipToWrist.reduce((a, b) => a + b, 0) / tipToWrist.length;
-
-    // 2) Fingers should be tightly curled: tip not farther than pip/mcp from wrist
-    let curledCount = 0;
-    for (let i = 0; i < tips.length; i += 1) {
-      const td = lmkDist(hand[tips[i]], wrist);
-      const pd = lmkDist(hand[pips[i]], wrist);
-      const md = lmkDist(hand[mcps[i]], wrist);
-      if (td <= Math.max(pd, md) * 1.02) curledCount += 1;
-    }
-
-    // 2b) Fingertips must be drawn inward toward palm center (not semi-open)
-    const palmCenter = {
-      x: (hand[0].x + hand[5].x + hand[9].x + hand[13].x + hand[17].x) / 5,
-      y: (hand[0].y + hand[5].y + hand[9].y + hand[13].y + hand[17].y) / 5,
-      z: (hand[0].z + hand[5].z + hand[9].z + hand[13].z + hand[17].z) / 5,
-    };
-    const avgTipToPalm = tips
-      .map((i) => lmkDist(hand[i], palmCenter) / scale)
-      .reduce((a, b) => a + b, 0) / tips.length;
-
-    // 2c) Knuckle-fist silhouette: each fingertip should be close to/behind its MCP in extension direction.
-    // In MediaPipe image coords, more open fingers usually have noticeably smaller y at tips.
-    // For fist, tip y tends to be near or greater than MCP y (folded back toward palm).
-    let foldedSilhouetteCount = 0;
-    for (let i = 0; i < tips.length; i += 1) {
-      const tip = hand[tips[i]];
-      const mcp = hand[mcps[i]];
-      if ((tip.y - mcp.y) > -0.02) foldedSilhouetteCount += 1;
-    }
-
-    // 3) Thumb should also be tucked (tip close to palm)
-    const thumbToPalm = lmkDist(hand[4], palmCenter) / scale;
-    const thumbTucked = (lmkDist(hand[4], wrist) / scale) < 1.24 && thumbToPalm < 0.98;
-
-    // Slightly relaxed closed-fist gate so delete doesn't require a perfect fist.
-    return (
-      avgTipToWrist < 1.14 &&
-      avgTipToPalm < 0.95 &&
-      curledCount >= 3 &&
-      foldedSilhouetteCount >= 2 &&
-      thumbTucked
-    );
-  }
-
   function isThumbsUpPose(hand) {
     if (!hand) return false;
     const scale = palmScale(hand);
@@ -2000,47 +1884,6 @@ export function bootstrapApp() {
     return pinchRatio < 0.34 && pinchFrontOfPalm && thumbReady && indexReady;
   }
 
-  function isPointPose(hand) {
-    if (!hand) return false;
-    const scale = palmScale(hand);
-    const wrist = hand[0];
-    const palmCenter = {
-      x: (hand[0].x + hand[5].x + hand[9].x + hand[13].x + hand[17].x) / 5,
-      y: (hand[0].y + hand[5].y + hand[9].y + hand[13].y + hand[17].y) / 5,
-      z: (hand[0].z + hand[5].z + hand[9].z + hand[13].z + hand[17].z) / 5,
-    };
-    const curledTips = [12, 16, 20];
-    const curledPips = [10, 14, 18];
-    const curledMcps = [9, 13, 17];
-
-    let curledCount = 0;
-    for (let i = 0; i < curledTips.length; i += 1) {
-      const tip = hand[curledTips[i]];
-      const tipToPalm = lmkDist(tip, palmCenter) / scale;
-      const tipToWrist = lmkDist(tip, wrist);
-      const pipToWrist = lmkDist(hand[curledPips[i]], wrist);
-      const mcpToWrist = lmkDist(hand[curledMcps[i]], wrist);
-      if (tipToPalm < 1 && tipToWrist <= Math.max(pipToWrist, mcpToWrist) * 1.06) {
-        curledCount += 1;
-      }
-    }
-
-    const indexTip = hand[8];
-    const indexPip = hand[6];
-    const indexMcp = hand[5];
-    const indexExtended =
-      (lmkDist(indexTip, palmCenter) / scale) > 1.08 &&
-      (lmkDist(indexTip, wrist) / scale) > 1.42 &&
-      lmkDist(indexTip, wrist) > lmkDist(indexPip, wrist) * 1.12 &&
-      indexTip.y < indexPip.y - 0.03 &&
-      indexTip.y < indexMcp.y - 0.06;
-
-    const thumbTip = hand[4];
-    const thumbRelaxed = (lmkDist(thumbTip, palmCenter) / scale) < 1.2;
-
-    return indexExtended && curledCount >= 3 && thumbRelaxed;
-  }
-
   function isRotatePose(hand) {
     if (!hand) return false;
     const scale = palmScale(hand);
@@ -2120,33 +1963,14 @@ export function bootstrapApp() {
     return mesh?.material?.color ? `#${mesh.material.color.getHexString()}` : "#7cf7e4";
   }
 
-  function meshScaleValue(mesh) {
-    if (!mesh) return 1;
-    return (Math.abs(mesh.scale.x || 1) + Math.abs(mesh.scale.y || 1) + Math.abs(mesh.scale.z || 1)) / 3;
-  }
-
-  function meshScaleAxisValue(mesh, axis = "x") {
-    if (!mesh?.scale) return 1;
-    return Math.abs(mesh.scale[axis] || 1);
-  }
-
   function meshPositionAxisValue(mesh, axis = "x") {
     if (!mesh?.position) return 0;
     return mesh.position[axis] || 0;
   }
 
-  function meshRotationDegrees(mesh) {
-    if (!mesh) return 0;
-    return THREE.MathUtils.radToDeg(mesh.rotation.y || 0);
-  }
-
   function meshRotationAxisDegrees(mesh, axis = "y") {
     if (!mesh?.rotation) return 0;
     return THREE.MathUtils.radToDeg(mesh.rotation[axis] || 0);
-  }
-
-  function clampScaleValue(value) {
-    return clamp(Number(value || 1), MIN_MESH_SCALE, MAX_MESH_SCALE);
   }
 
   function normalizeRotationDegrees(value) {
@@ -2265,16 +2089,6 @@ export function bootstrapApp() {
     return nextValue;
   }
 
-  function updateMeshScaleValue(objectSerial, rawValue) {
-    const mesh = findMeshBySerial(objectSerial);
-    if (!mesh) return null;
-    const nextScale = clampScaleValue(rawValue);
-    scaleMeshSceneObject(mesh, nextScale, "scale");
-    updateGeometryMetrics(mesh.userData.shape || shapeTypeEl.value, mesh.userData.baseSize, mesh);
-    refreshDebug();
-    return nextScale;
-  }
-
   function translateLineByDelta(mesh, axis, nextValue) {
     const currentValue = mesh.position?.[axis] || 0;
     const delta = Number(nextValue) - currentValue;
@@ -2304,27 +2118,6 @@ export function bootstrapApp() {
     return nextValue;
   }
 
-  function updateMeshScaleAxisValue(objectSerial, axis, rawValue) {
-    const mesh = findMeshBySerial(objectSerial);
-    if (!mesh) return null;
-    const nextScale = clampScaleValue(rawValue);
-    const ratio = nextScale / Math.max(0.0001, meshScaleAxisValue(mesh, axis));
-    scaleMeshSceneObject(mesh, ratio, "scale-axis");
-    updateGeometryMetrics(mesh.userData.shape || shapeTypeEl.value, mesh.userData.baseSize, mesh);
-    refreshDebug();
-    return nextScale;
-  }
-
-  function updateMeshRotationValue(objectSerial, rawValue) {
-    const mesh = findMeshBySerial(objectSerial);
-    if (!mesh) return null;
-    const degrees = normalizeRotationDegrees(rawValue);
-    mesh.rotation.y = THREE.MathUtils.degToRad(degrees);
-    sceneRuntime.notifySceneChanged("rotation", mesh);
-    refreshDebug();
-    return degrees;
-  }
-
   function updateMeshRotationAxisValue(objectSerial, axis, rawValue) {
     const mesh = findMeshBySerial(objectSerial);
     if (!mesh?.rotation) return null;
@@ -2333,10 +2126,6 @@ export function bootstrapApp() {
     sceneRuntime.notifySceneChanged("rotation-axis", mesh);
     refreshDebug();
     return degrees;
-  }
-
-  function buildObjectEditorValue(mesh) {
-    return `shape=${mesh.userData?.shape || "cube"} color=${colorHex(mesh)}`;
   }
 
   function escapeHtml(value) {
@@ -2407,62 +2196,6 @@ export function bootstrapApp() {
     if (!bbox) return;
     const halfHeight = (bbox.max.y - bbox.min.y) * Math.abs(mesh.scale.y || 1) * 0.5;
     mesh.position.y = halfHeight;
-  }
-
-  function parseObjectEditorValue(rawValue, mesh) {
-    const currentShape = mesh.userData?.shape || "cube";
-    const currentColor = colorHex(mesh);
-    const text = String(rawValue || "").trim();
-    const shapeMatch =
-      text.match(/shape\s*[:=]\s*(cube|cuboid|sphere|cylinder|cone|pyramid|plane|line)/i) ||
-      text.match(/\b(cube|cuboid|sphere|cylinder|cone|pyramid|plane|line)\b/i);
-    const hexMatch = text.match(/#[0-9a-f]{3,8}\b/i);
-    const colorMatch = text.match(/color\s*[:=]\s*([^\s,;]+)/i);
-    const nextShape = shapeMatch ? shapeMatch[1].toLowerCase() : currentShape;
-    const nextColorToken = hexMatch?.[0] || colorMatch?.[1] || currentColor;
-
-    return {
-      hasShape: Boolean(shapeMatch),
-      hasColor: Boolean(hexMatch || colorMatch),
-      nextShape,
-      nextColorToken,
-      text,
-    };
-  }
-
-  function applyObjectEditorValue(objectSerial, rawValue) {
-    const mesh = placedMeshes.find((item) => Number(item.userData?.objectSerial) === Number(objectSerial));
-    if (!mesh) return false;
-
-    const parsed = parseObjectEditorValue(rawValue, mesh);
-    if (!parsed.hasShape && !parsed.hasColor) {
-      setStatus("Type a shape and/or color, for example: shape=sphere color=#ff9d5c", "error");
-      renderObjectList();
-      return false;
-    }
-
-    try {
-      applyMeshAppearance(mesh, parsed.nextShape, parsed.nextColorToken);
-      if (
-        (transformSession?.mesh && transformSession.mesh !== mesh) ||
-        (rotationSession?.mesh && rotationSession.mesh !== mesh)
-      ) {
-        transformSession = null;
-        rotationSession = null;
-        pendingTransformCandidate = null;
-        pendingTransformSince = null;
-        transformMissingHandSince = null;
-      }
-      setActiveMesh(mesh);
-      setStatus(`Updated ${mesh.userData.label}: ${parsed.nextShape} ${colorHex(mesh)}`, "ok");
-      renderObjectList();
-      refreshDebug();
-      return true;
-    } catch (error) {
-      setStatus(`Could not parse object edit: ${error?.message || error}`, "error");
-      renderObjectList();
-      return false;
-    }
   }
 
   function renderObjectList() {
@@ -2963,7 +2696,6 @@ export function bootstrapApp() {
       const secondary = hands[1] || null;
       const lineToolSelected = shapeTypeEl.value === "line";
       const primaryVisual = visualHands[0]?.landmarks || primary;
-      const secondaryVisual = visualHands[1]?.landmarks || secondary;
       const handCount = hands.length;
       const baseInteraction = pipeline.update(primary, secondary);
       const autoMode = handCount >= 2 ? "transform" : "spawn";
@@ -2981,13 +2713,11 @@ export function bootstrapApp() {
         : null;
       const pinchHitRaw = pinchPlacementRaw?.point || null;
       const primaryIndexHitRaw = primaryVisual?.[8] ? world.projectToGround(primaryVisual[8]) : null;
-      const secondaryIndexHitRaw = secondaryVisual?.[8] ? world.projectToGround(secondaryVisual[8]) : null;
 
       smoothedPalm = smoothPoint(smoothedPalm, primaryPalmHitRaw, 0.24);
       smoothedSecondaryPalm = smoothPoint(smoothedSecondaryPalm, secondaryPalmHitRaw, 0.24);
       smoothedPinch = smoothPoint(smoothedPinch, pinchHitRaw, 0.3);
       smoothedPrimaryIndex = smoothPoint(smoothedPrimaryIndex, primaryIndexHitRaw, 0.22);
-      smoothedSecondaryIndex = smoothPoint(smoothedSecondaryIndex, secondaryIndexHitRaw, 0.22);
 
       const primaryPalmHit = primaryPalmHitRaw || smoothedPalm;
       const secondaryPalmHit = secondaryPalmHitRaw || smoothedSecondaryPalm;
@@ -3000,13 +2730,6 @@ export function bootstrapApp() {
         }
         : null;
       const primaryIndexHit = primaryIndexHitRaw || smoothedPrimaryIndex;
-      const secondaryIndexHit = secondaryIndexHitRaw || smoothedSecondaryIndex;
-      const palmMidpoint = primaryPalmHit && secondaryPalmHit
-        ? primaryPalmHit.clone().lerp(secondaryPalmHit, 0.5)
-        : primaryPalmHit;
-      const indexMidpoint = primaryIndexHit && secondaryIndexHit
-        ? primaryIndexHit.clone().lerp(secondaryIndexHit, 0.5)
-        : primaryIndexHit;
       const deleteTarget = autoMode === "spawn"
         ? pickDeleteTargetFromHand(primaryPalmHit, pinchHit, primaryIndexHit)
         : null;
@@ -3039,7 +2762,6 @@ export function bootstrapApp() {
       const thumbsUpRelease = Boolean(transformSession || rotationSession) && [primary, secondary].some(
         (hand) => hand && isThumbsUpPose(hand)
       );
-      const pointActive = signal === SIGNALS.POINT_ROTATE;
       let transformEndedThisFrame = false;
       let handReturnThisFrame = false;
 
@@ -3156,11 +2878,9 @@ export function bootstrapApp() {
         rotationSession = null;
         pendingTransformCandidate = null;
         pendingTransformSince = null;
-        wristRotSession = null;
 
         prevPlacementPulseActive = placementPulseActive;
         prevPinch = pinchActive;
-        prevPointPose = false;
       } else if (autoMode === "transform" && !transformEndedThisFrame) {
         if (placementPreview) {
           disposePlacementPreview();
@@ -3253,7 +2973,6 @@ export function bootstrapApp() {
           syncSelectionMarker(transformSession.mesh);
         }
 
-        prevPointPose = false;
       } else if (transformSession || rotationSession) {
         fistHoldStartAt = null;
         prevPlacementPulseActive = false;
@@ -3313,14 +3032,12 @@ export function bootstrapApp() {
 
       if (!primary) {
         prevPinch = false;
-        prevPointPose = false;
         prevPlacementPulseActive = false;
         fistHoldStartAt = null;
         smoothedPalm = null;
         smoothedPinch = null;
         smoothedPrimaryIndex = null;
         smoothedSecondaryPalm = null;
-        smoothedSecondaryIndex = null;
         transformMissingHandSince = null;
         overlayHandStates = [];
         pendingTransformCandidate = null;
@@ -3331,7 +3048,6 @@ export function bootstrapApp() {
         if (!transformSession) rotationSession = null;
       } else if (!secondary) {
         smoothedSecondaryPalm = null;
-        smoothedSecondaryIndex = null;
         pendingTransformCandidate = null;
         pendingTransformSince = null;
       }
@@ -3369,14 +3085,12 @@ export function bootstrapApp() {
     rotationSession = null;
     setActiveMesh(null);
     prevPinch = false;
-    prevPointPose = false;
     prevPlacementPulseActive = false;
     fistHoldStartAt = null;
     smoothedPalm = null;
     smoothedPinch = null;
     smoothedPrimaryIndex = null;
     smoothedSecondaryPalm = null;
-    smoothedSecondaryIndex = null;
     transformMissingHandSince = null;
     overlayHandStates = [];
     disposePlacementPreview();

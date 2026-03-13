@@ -106,7 +106,7 @@ parse.post("/", async (c) => {
     let sceneSpec;
     try {
       sceneSpec = JSON.parse(cleaned);
-    } catch (parseErr) {
+    } catch {
       console.error("Failed to parse Nova response as JSON:", cleaned);
       return c.json(
         { error: "Model returned invalid JSON", raw: cleaned },

@@ -102,7 +102,7 @@ export class InteractionPipeline {
     this._pinchRatioPrev = pinchRatioEma;
     this._pinchRatioEma = pinchRatioEma;
 
-    let pinchOnThreshold = clamp(this.pinchOnRatio * wristToIndex, this.pinchOnMin, this.pinchOnMax);
+    const pinchOnThreshold = clamp(this.pinchOnRatio * wristToIndex, this.pinchOnMin, this.pinchOnMax);
     let pinchOffThreshold = clamp(this.pinchOffRatio * wristToIndex, this.pinchOffMin, this.pinchOffMax);
     if (pinchOffThreshold <= pinchOnThreshold + 0.004) {
       pinchOffThreshold = pinchOnThreshold + 0.004;

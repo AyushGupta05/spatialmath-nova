@@ -75,8 +75,9 @@ export function createSceneStore() {
       return state;
     },
     on(eventName, handler) {
-      target.addEventListener(eventName, (event) => handler(event.detail));
-      return () => target.removeEventListener(eventName, handler);
+      const listener = (event) => handler(event.detail);
+      target.addEventListener(eventName, listener);
+      return () => target.removeEventListener(eventName, listener);
     },
     addEventListener: target.addEventListener.bind(target),
     removeEventListener: target.removeEventListener.bind(target),
