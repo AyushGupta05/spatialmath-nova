@@ -1,6 +1,7 @@
 import { normalizeSceneObject } from "../scene/schema.js";
 
 const VALID_QUESTION_TYPES = ["volume", "surface_area", "composite", "spatial", "comparison"];
+const VALID_LIVE_CHALLENGE_METRICS = ["volume", "surfaceArea"];
 const VALID_STEP_ACTIONS = ["add", "verify", "adjust", "observe", "answer"];
 
 function normalizeString(value, fallback = "") {
@@ -95,6 +96,23 @@ function normalizeChallengePrompt(prompt = {}, index = 0) {
   };
 }
 
+function normalizeLiveChallenge(liveChallenge = {}) {
+  if (!liveChallenge || typeof liveChallenge !== "object") return null;
+  const metric = VALID_LIVE_CHALLENGE_METRICS.includes(liveChallenge.metric)
+    ? liveChallenge.metric
+    : null;
+  if (!metric) return null;
+
+  return {
+    id: liveChallenge.id || `live-${metric}`,
+    title: normalizeString(liveChallenge.title, ""),
+    metric,
+    multiplier: Math.max(1, Number(liveChallenge.multiplier) || 1),
+    prompt: normalizeString(liveChallenge.prompt, ""),
+    tolerance: Number(liveChallenge.tolerance) || 0.03,
+  };
+}
+
 export function normalizeScenePlan(plan = {}) {
   const objectSuggestions = normalizeArray(plan.objectSuggestions || plan.objects)
     .map((suggestion, index) => normalizeObjectSuggestion(suggestion, index));
@@ -108,6 +126,7 @@ export function normalizeScenePlan(plan = {}) {
     .map((bookmark, index) => normalizeCameraBookmark(bookmark, index));
   const challengePrompts = normalizeArray(plan.challengePrompts)
     .map((prompt, index) => normalizeChallengePrompt(prompt, index));
+  const liveChallenge = normalizeLiveChallenge(plan.liveChallenge);
 
   return {
     problem: {
@@ -123,6 +142,7 @@ export function normalizeScenePlan(plan = {}) {
     cameraBookmarks,
     answerScaffold: normalizeAnswerScaffold(plan.answerScaffold || plan.answer || {}),
     challengePrompts,
+    liveChallenge,
   };
 }
 
@@ -211,6 +231,18 @@ export function sceneSpecToPlan(sceneSpec = {}, options = {}) {
       formula: sceneSpec.answer?.formula || "",
       explanation: normalizeArray(sceneSpec.answer?.steps).map((step) => step.text).join(" "),
     },
+    liveChallenge: options.liveChallenge || (["volume", "surface_area"].includes(sceneSpec.questionType)
+      ? {
+        id: `${options.id || sceneSpec.id || "challenge"}-live-goal`,
+        title: sceneSpec.questionType === "surface_area" ? "Double the Surface Area" : "Double the Volume",
+        metric: sceneSpec.questionType === "surface_area" ? "surfaceArea" : "volume",
+        multiplier: 2,
+        prompt: sceneSpec.questionType === "surface_area"
+          ? "Adjust the build until the surface area doubles."
+          : "Adjust the build until the volume doubles.",
+        tolerance: options.tolerance ?? 0.04,
+      }
+      : null),
     challengePrompts: options.challengePrompts || [{
       id: `${options.id || sceneSpec.id || "challenge"}-answer`,
       prompt: options.challengePrompt || sceneSpec.question || "",

@@ -61,6 +61,20 @@ function objectDimensionScore(expectedObject, actualObject) {
 }
 
 function findBestMatch(suggestion, sceneObjects, usedIds) {
+  for (const objectSpec of sceneObjects) {
+    if (usedIds.has(objectSpec.id)) continue;
+    const metadata = objectSpec.metadata || {};
+    if (
+      objectSpec.id === suggestion.object.id ||
+      metadata.sourceSuggestionId === suggestion.id ||
+      metadata.suggestionId === suggestion.id ||
+      metadata.guidedObjectId === suggestion.object.id
+    ) {
+      usedIds.add(objectSpec.id);
+      return { object: objectSpec, score: 1 };
+    }
+  }
+
   let best = null;
   let bestScore = 0;
 

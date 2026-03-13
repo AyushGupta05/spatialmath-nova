@@ -24,11 +24,11 @@ export async function evaluateBuild({ plan, sceneSnapshot, currentStepId = null 
   return readJsonOrError(response, "Failed to evaluate build");
 }
 
-export async function askTutor({ plan, sceneSnapshot, learningState, userMessage, contextStepId, onChunk, onAssessment }) {
+export async function askTutor({ plan, sceneSnapshot, sceneContext = null, learningState, userMessage, contextStepId, onChunk, onAssessment }) {
   const response = await fetch(`${API_BASE}/tutor`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ plan, sceneSnapshot, learningState, userMessage, contextStepId }),
+    body: JSON.stringify({ plan, sceneSnapshot, sceneContext, learningState, userMessage, contextStepId }),
   });
 
   if (!response.ok) {

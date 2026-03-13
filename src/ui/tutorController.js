@@ -7,9 +7,11 @@ import {
   checkChallenge,
 } from "../ai/client.js";
 import { buildSceneSnapshotFromSuggestions, normalizeScenePlan } from "../ai/planSchema.js";
+import { computeGeometry } from "../core/geometry.js";
 import { initLabelRenderer, renderLabels, addLabel, clearLabels } from "../render/labels.js";
 import { CameraDirector } from "../render/cameraDirector.js";
 import { tutorState } from "../state/tutorState.js";
+import { initUnfoldDrawer, syncUnfoldDrawer } from "./unfoldDrawer.js";
 
 let appContext = null;
 let world = null;
@@ -18,6 +20,8 @@ let cameraDirector = null;
 let assessmentTimer = null;
 let voiceEnabled = false;
 let activeChallenge = null;
+let liveChallengeState = null;
+let observationState = null;
 
 let questionInput;
 let questionSubmit;
@@ -29,11 +33,16 @@ let planObjects;
 let addAllBtn;
 let stepByStepBtn;
 let buildManuallyBtn;
+let buildStatusSection;
+let buildCompletionChip;
+let buildProgress;
+let stepStatusNote;
 let buildStepsSection;
 let buildStepsList;
 let buildGoalChip;
-let challengePromptList;
-let voiceTranscript;
+let liveChallengeSection;
+let liveChallengeChip;
+let liveChallengeCard;
 let challengeList;
 let scoreDisplay;
 let chatMessages;
@@ -64,6 +73,77 @@ function currentSnapshot() {
   return sceneApi?.snapshot?.() || { objects: [], selectedObjectId: null };
 }
 
+function formatNumber(value, digits = 2) {
+  const next = Number(value);
+  if (!Number.isFinite(next)) return "0";
+  return next.toFixed(digits).replace(/\.00$/, "");
+}
+
+function formatMetricName(metric) {
+  return metric === "surfaceArea" ? "surface area" : metric || "metric";
+}
+
+function suggestionTitle(plan, suggestionId) {
+  return plan?.objectSuggestions?.find((suggestion) => suggestion.id === suggestionId)?.title || suggestionId;
+}
+
+function currentStepAssessment(assessment) {
+  const step = tutorState.getCurrentStep();
+  if (!step || !assessment) return null;
+  return assessment.stepAssessments?.find((item) => item.stepId === step.id) || null;
+}
+
+function selectedSceneObject(snapshot = currentSnapshot()) {
+  const objectId = snapshot?.selectedObjectId || sceneApi?.getSelection?.() || null;
+  return objectId ? sceneApi?.getObject?.(objectId) || null : null;
+}
+
+function selectedObjectContext(snapshot = currentSnapshot()) {
+  const objectSpec = selectedSceneObject(snapshot);
+  if (!objectSpec) return null;
+  const metrics = computeGeometry(objectSpec.shape, objectSpec.params);
+  return {
+    id: objectSpec.id,
+    label: objectSpec.label || objectSpec.shape,
+    shape: objectSpec.shape,
+    params: objectSpec.params,
+    metrics: {
+      volume: Number(metrics.volume.toFixed(3)),
+      surfaceArea: Number(metrics.surfaceArea.toFixed(3)),
+    },
+  };
+}
+
+function resetLiveChallengeState(plan = activePlan()) {
+  const challenge = plan?.liveChallenge || null;
+  liveChallengeState = challenge
+    ? {
+      planId: plan.problem?.id || null,
+      challengeId: challenge.id,
+      unlocked: false,
+      complete: false,
+      primarySuggestionId: null,
+      primaryObjectId: null,
+      baselineValue: null,
+      targetValue: null,
+      currentValue: null,
+      deltaValue: null,
+      progress: 0,
+      toleranceValue: null,
+    }
+    : null;
+}
+
+function resetObservationState() {
+  observationState = {
+    announcedStepIds: new Set(),
+    lastPlacedObjectId: null,
+    liveUnlocked: false,
+    liveComplete: false,
+    lastProgressBucket: -1,
+  };
+}
+
 function setQuestionStatus(text = "", type = "hidden") {
   if (!questionStatus) return;
   questionStatus.textContent = text;
@@ -85,6 +165,11 @@ function addChatMessage(role, content) {
   chatMessages.appendChild(message);
   chatMessages.scrollTop = chatMessages.scrollHeight;
   return message;
+}
+
+function appendTutorObservation(content) {
+  addChatMessage("tutor", content);
+  tutorState.addMessage("assistant", content);
 }
 
 function clearChat() {
@@ -120,21 +205,33 @@ function showAnswerFeedback(text, correct = false) {
 }
 
 function renderSceneInfo() {
-  if (!sceneInfo) return;
+  if (!sceneInfo || !objectCount) return;
   const snapshot = currentSnapshot();
   const plan = activePlan();
+  const selected = selectedObjectContext(snapshot);
   const count = snapshot.objects.length;
+
   objectCount.textContent = String(count);
 
   if (!plan) {
-    sceneInfo.innerHTML = `<p class="muted-text">Ask a question or choose a challenge to generate a guided build.</p>`;
+    sceneInfo.innerHTML = `<p class="muted-text">Ask a question or choose a practice challenge to generate a guided build.</p>`;
     return;
   }
+
+  const selectionMarkup = selected
+    ? `
+      <p class="muted-text" style="margin:8px 0 0">
+        Selected: <strong>${selected.label}</strong>
+        <span class="formula">V = ${formatNumber(selected.metrics.volume)}, SA = ${formatNumber(selected.metrics.surfaceArea)}</span>
+      </p>
+    `
+    : `<p class="muted-text" style="margin:8px 0 0">Select or right click a solid to inspect its dimensions and unfold view.</p>`;
 
   sceneInfo.innerHTML = `
     <p style="margin:0 0 6px"><strong>${plan.problem.question}</strong></p>
     <p class="muted-text">${count} object${count === 1 ? "" : "s"} currently in the world</p>
-    <p class="muted-text">Formula scaffold: <span class="formula">${plan.answerScaffold.formula || "Ask the tutor to derive it from the scene."}</span></p>
+    <p class="muted-text">Formula scaffold: <span class="formula">${plan.answerScaffold.formula || "Ask the tutor to derive it from the current scene."}</span></p>
+    ${selectionMarkup}
   `;
 }
 
@@ -143,7 +240,7 @@ function renderPlanSummary(plan) {
   planSummary.textContent = plan.problem.summary || plan.problem.question;
   if (buildSummary) {
     buildSummary.classList.remove("hidden");
-    buildSummary.textContent = plan.overview || "Start with the suggested build, then use the tutor to reason through the measurements.";
+    buildSummary.textContent = plan.overview || "Nova turned the question into a spatial build. Start placing objects or let Nova add the scene.";
   }
   planObjects.innerHTML = plan.objectSuggestions.map((suggestion) => `
     <li>
@@ -154,17 +251,10 @@ function renderPlanSummary(plan) {
   scenePlanSection.classList.remove("hidden");
 }
 
-function renderPrompts(plan) {
-  if (!challengePromptList) return;
-  challengePromptList.innerHTML = plan.challengePrompts.map((prompt) => `
-    <div class="challenge-prompt-card">${prompt.prompt}</div>
-  `).join("") || `<div class="challenge-prompt-card">No challenge prompts yet. Build the scene first.</div>`;
-}
-
 function renderCameraBookmarks(plan) {
   if (!cameraBookmarkList) return;
   cameraBookmarkList.innerHTML = "";
-  (plan.cameraBookmarks || []).forEach((bookmark) => {
+  (plan?.cameraBookmarks || []).forEach((bookmark) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "camera-bookmark-btn";
@@ -206,7 +296,7 @@ function addSuggestionsById(suggestionIds) {
 }
 
 function renderSteps(plan, assessment) {
-  if (!buildStepsList || !buildStepsSection) return;
+  if (!buildStepsList || !buildStepsSection || !plan) return;
   buildStepsSection.classList.remove("hidden");
   const currentStep = tutorState.getCurrentStep();
   buildGoalChip.textContent = currentStep ? currentStep.title : "Ready";
@@ -216,7 +306,9 @@ function renderSteps(plan, assessment) {
     const active = tutorState.currentStep === index;
     const complete = Boolean(stepAssessment?.complete);
     const missing = missingSuggestionIds(step, assessment);
-    const buttonLabel = missing.length ? `Add ${missing.length} suggestion${missing.length === 1 ? "" : "s"}` : "Review step";
+    const buttonLabel = missing.length
+      ? `Add ${missing.length} suggestion${missing.length === 1 ? "" : "s"}`
+      : step.cameraBookmarkId ? "Focus view" : "Review step";
     return `
       <article class="build-step-card${active ? " is-active" : ""}${complete ? " is-complete" : ""}" data-step-id="${step.id}">
         <div class="build-step-top">
@@ -224,7 +316,7 @@ function renderSteps(plan, assessment) {
           <span class="build-step-state">${complete ? "complete" : active ? "active" : "open"}</span>
         </div>
         <p class="build-step-instruction">${step.instruction}</p>
-        <p class="build-step-hint">${step.hint || "Use the tutor if you need a short hint."}</p>
+        <p class="build-step-hint">${step.hint || "Ask Nova for a short hint if you need one."}</p>
         <p class="build-step-feedback ${complete ? "is-good" : "is-warn"}">${stepAssessment?.feedback || "Build this part of the scene to continue."}</p>
         <div class="build-step-actions">
           <button type="button" class="step-card-btn" data-step-action="focus" data-step-id="${step.id}">${buttonLabel}</button>
@@ -251,6 +343,48 @@ function renderAssessment(assessment) {
   showAnswerSection(Boolean(activeChallenge && assessment.answerGate.allowed));
 }
 
+function renderBuildStatus(plan, assessment) {
+  if (!buildStatusSection || !buildCompletionChip || !buildProgress || !stepStatusNote) return;
+  if (!plan) {
+    buildStatusSection.classList.add("hidden");
+    return;
+  }
+
+  buildStatusSection.classList.remove("hidden");
+
+  if (!assessment) {
+    buildCompletionChip.textContent = `0 / ${plan.objectSuggestions.filter((suggestion) => !suggestion.optional).length}`;
+    buildProgress.innerHTML = `<p class="muted-text">Nova will track exact object matches as soon as the scene starts changing.</p>`;
+    stepStatusNote.textContent = "Place the first required object or let Nova add the suggestions.";
+    return;
+  }
+
+  const percent = Math.round((assessment.summary.completionRatio || 0) * 100);
+  const currentStep = tutorState.getCurrentStep();
+  const stepAssessment = currentStepAssessment(assessment);
+  const missingTitles = missingSuggestionIds(currentStep, assessment).map((id) => suggestionTitle(plan, id));
+
+  buildCompletionChip.textContent = `${assessment.summary.matchedRequiredObjects} / ${assessment.summary.totalRequiredObjects}`;
+  buildProgress.innerHTML = `
+    <div class="validation-stat"><strong>${percent}%</strong> completion</div>
+    <div class="validation-stat"><strong>${assessment.summary.matchedRequiredObjects}</strong> required object${assessment.summary.matchedRequiredObjects === 1 ? "" : "s"} placed</div>
+    <div class="validation-stat"><strong>${stepAssessment?.complete ? "Step clear" : "Step active"}</strong><br />${currentStep?.title || "No active step selected"}</div>
+  `;
+
+  if (!currentStep) {
+    stepStatusNote.textContent = assessment.answerGate.allowed
+      ? "The core build is complete. Manipulate the scene or ask Nova to explain the math."
+      : "Select a build step to continue.";
+    return;
+  }
+
+  stepStatusNote.textContent = stepAssessment?.complete
+    ? `${currentStep.title} is complete. Move to the next step or start exploring the scene.`
+    : missingTitles.length
+      ? `Still needed for ${currentStep.title}: ${missingTitles.join(", ")}.`
+      : `Keep shaping ${currentStep.title}. Nova is watching the scene for the right dimensions.`;
+}
+
 function showStepIndicator() {
   if (!stepIndicator) return;
   const total = tutorState.totalSteps;
@@ -264,13 +398,205 @@ function showStepIndicator() {
   stepNext.disabled = tutorState.currentStep >= total - 1;
 }
 
+function findPrimaryLiveSuggestion(plan) {
+  if (!plan?.liveChallenge) return null;
+  const requiredIds = new Set(plan.buildSteps.flatMap((step) => step.requiredObjectIds || []));
+  return plan.objectSuggestions.find((suggestion) => requiredIds.has(suggestion.id) && suggestion.object.shape !== "line")
+    || plan.objectSuggestions.find((suggestion) => suggestion.object.shape !== "line")
+    || null;
+}
+
+function findObjectForSuggestion(snapshot, suggestion, assessment = null) {
+  if (!snapshot || !suggestion) return null;
+  const matchedObjectId = assessment?.objectAssessments?.find((item) => item.suggestionId === suggestion.id)?.matchedObjectId || null;
+  if (matchedObjectId) {
+    return snapshot.objects.find((objectSpec) => objectSpec.id === matchedObjectId) || null;
+  }
+
+  return snapshot.objects.find((objectSpec) => {
+    const metadata = objectSpec.metadata || {};
+    return (
+      objectSpec.id === suggestion.object.id ||
+      metadata.sourceSuggestionId === suggestion.id ||
+      metadata.suggestionId === suggestion.id ||
+      metadata.guidedObjectId === suggestion.object.id
+    );
+  }) || null;
+}
+
+function computeLiveChallenge(plan, assessment) {
+  const challenge = plan?.liveChallenge;
+  if (!challenge) return null;
+
+  if (!liveChallengeState || liveChallengeState.planId !== plan.problem?.id || liveChallengeState.challengeId !== challenge.id) {
+    resetLiveChallengeState(plan);
+  }
+
+  const snapshot = currentSnapshot();
+  const primarySuggestion = findPrimaryLiveSuggestion(plan);
+  const activeObject = liveChallengeState?.primaryObjectId
+    ? sceneApi.getObject(liveChallengeState.primaryObjectId)
+    : findObjectForSuggestion(snapshot, primarySuggestion, assessment);
+  const currentObject = activeObject || findObjectForSuggestion(snapshot, primarySuggestion, assessment);
+  const currentMetrics = currentObject ? computeGeometry(currentObject.shape, currentObject.params) : null;
+  const currentValue = currentMetrics ? currentMetrics[challenge.metric] : null;
+
+  if (!liveChallengeState.unlocked && assessment?.answerGate?.allowed && primarySuggestion && currentObject && Number.isFinite(currentValue)) {
+    liveChallengeState.unlocked = true;
+    liveChallengeState.primarySuggestionId = primarySuggestion.id;
+    liveChallengeState.primaryObjectId = currentObject.id;
+    liveChallengeState.baselineValue = currentValue;
+    liveChallengeState.targetValue = currentValue * challenge.multiplier;
+  }
+
+  if (liveChallengeState.unlocked) {
+    const trackedObject = sceneApi.getObject(liveChallengeState.primaryObjectId)
+      || findObjectForSuggestion(snapshot, primarySuggestion, assessment);
+    const trackedMetrics = trackedObject ? computeGeometry(trackedObject.shape, trackedObject.params) : null;
+    const trackedValue = trackedMetrics ? trackedMetrics[challenge.metric] : null;
+    liveChallengeState.primaryObjectId = trackedObject?.id || liveChallengeState.primaryObjectId;
+    liveChallengeState.currentValue = trackedValue;
+    liveChallengeState.deltaValue = Number.isFinite(trackedValue) && Number.isFinite(liveChallengeState.targetValue)
+      ? trackedValue - liveChallengeState.targetValue
+      : null;
+    liveChallengeState.toleranceValue = Number.isFinite(liveChallengeState.targetValue)
+      ? Math.max(0.0001, liveChallengeState.targetValue * challenge.tolerance)
+      : null;
+    liveChallengeState.progress = Number.isFinite(trackedValue) && Number.isFinite(liveChallengeState.targetValue) && liveChallengeState.targetValue > 0
+      ? Math.max(0, Math.min(trackedValue / liveChallengeState.targetValue, 1.25))
+      : 0;
+    liveChallengeState.complete = Number.isFinite(liveChallengeState.deltaValue) && Number.isFinite(liveChallengeState.toleranceValue)
+      ? Math.abs(liveChallengeState.deltaValue) <= liveChallengeState.toleranceValue
+      : false;
+  }
+
+  return {
+    ...challenge,
+    ...liveChallengeState,
+    primarySuggestion,
+  };
+}
+
+function renderLiveChallenge(plan, assessment) {
+  if (!liveChallengeSection || !liveChallengeChip || !liveChallengeCard) return;
+  if (!plan?.liveChallenge) {
+    liveChallengeSection.classList.add("hidden");
+    return;
+  }
+
+  liveChallengeSection.classList.remove("hidden");
+  const state = computeLiveChallenge(plan, assessment);
+  const metricName = formatMetricName(plan.liveChallenge.metric);
+
+  if (!state?.unlocked) {
+    liveChallengeChip.textContent = "Locked";
+    liveChallengeCard.innerHTML = `
+      <p class="live-challenge-title">${plan.liveChallenge.title || `Double the ${metricName}`}</p>
+      <p class="live-challenge-prompt">${plan.liveChallenge.prompt || `Complete the build to unlock a live ${metricName} target.`}</p>
+      <div class="live-challenge-progress"><span style="width: 0%"></span></div>
+    `;
+    return;
+  }
+
+  liveChallengeChip.textContent = state.complete ? "Complete" : "Active";
+  const progressPercent = Math.max(0, Math.min(state.progress * 100, 100));
+  const remaining = Number.isFinite(state.deltaValue) ? state.targetValue - state.currentValue : null;
+  liveChallengeCard.innerHTML = `
+    <p class="live-challenge-title">${state.title || `Double the ${metricName}`}</p>
+    <p class="live-challenge-prompt">${state.prompt || `Adjust the scene until the ${metricName} reaches the target.`}</p>
+    <div class="live-challenge-metric">
+      <div class="live-challenge-stat">
+        <span class="live-challenge-stat-label">Current</span>
+        <span class="live-challenge-stat-value">${formatNumber(state.currentValue)}</span>
+      </div>
+      <div class="live-challenge-stat">
+        <span class="live-challenge-stat-label">Target</span>
+        <span class="live-challenge-stat-value">${formatNumber(state.targetValue)}</span>
+      </div>
+      <div class="live-challenge-stat">
+        <span class="live-challenge-stat-label">${state.complete ? "Status" : "Delta"}</span>
+        <span class="live-challenge-stat-value">${state.complete ? "Within tolerance" : formatNumber(remaining)}</span>
+      </div>
+    </div>
+    <div class="live-challenge-progress"><span style="width: ${progressPercent}%"></span></div>
+    <p class="muted-text">${state.complete
+      ? `Target reached. Nova accepts a tolerance of +/-${formatNumber(state.toleranceValue)} ${metricName}.`
+      : `Tolerance: +/-${formatNumber(state.toleranceValue)} ${metricName}. Keep shaping the object until the target is close enough.`}</p>
+  `;
+}
+
+function sceneContextPayload(plan, assessment) {
+  const snapshot = currentSnapshot();
+  const selection = selectedObjectContext(snapshot);
+  const challenge = plan?.liveChallenge ? computeLiveChallenge(plan, assessment) : null;
+  return {
+    selection,
+    liveChallenge: challenge
+      ? {
+        id: challenge.challengeId,
+        title: challenge.title,
+        metric: challenge.metric,
+        unlocked: challenge.unlocked,
+        complete: challenge.complete,
+        currentValue: challenge.currentValue,
+        targetValue: challenge.targetValue,
+        toleranceValue: challenge.toleranceValue,
+      }
+      : null,
+  };
+}
+
+function handleAssessmentObservations(plan, previousAssessment, nextAssessment) {
+  if (!plan || !nextAssessment || !observationState) return;
+
+  const previousMatched = previousAssessment?.summary?.matchedRequiredObjects || 0;
+  const nextMatched = nextAssessment.summary?.matchedRequiredObjects || 0;
+  if (nextMatched > previousMatched) {
+    appendTutorObservation(`Build progress: ${nextMatched}/${nextAssessment.summary.totalRequiredObjects} required objects are now matched.`);
+  }
+
+  nextAssessment.stepAssessments.forEach((stepAssessment) => {
+    if (!stepAssessment.complete || observationState.announcedStepIds.has(stepAssessment.stepId)) return;
+    observationState.announcedStepIds.add(stepAssessment.stepId);
+    const nextStep = plan.buildSteps.find((step) => step.id === stepAssessment.stepId);
+    appendTutorObservation(nextStep
+      ? `${nextStep.title} is complete. ${nextStep.hint || "Move on to the next spatial relationship."}`
+      : `${stepAssessment.title} is complete.`);
+  });
+}
+
+function handleLiveChallengeObservations(plan, assessment) {
+  const state = computeLiveChallenge(plan, assessment);
+  if (!state || !observationState) return;
+
+  if (state.unlocked && !observationState.liveUnlocked) {
+    observationState.liveUnlocked = true;
+    appendTutorObservation(`Live challenge unlocked: reach ${formatNumber(state.targetValue)} ${formatMetricName(state.metric)} by reshaping the main object.`);
+  }
+
+  const bucket = Math.floor(Math.max(0, Math.min(state.progress, 1)) * 4);
+  if (state.unlocked && !state.complete && bucket > observationState.lastProgressBucket && bucket > 0) {
+    observationState.lastProgressBucket = bucket;
+    appendTutorObservation(`Challenge progress: you're about ${bucket * 25}% of the way to the ${formatMetricName(state.metric)} target.`);
+  }
+
+  if (state.complete && !observationState.liveComplete) {
+    observationState.liveComplete = true;
+    appendTutorObservation(`Challenge complete. The current ${formatMetricName(state.metric)} is within Nova's tolerance band.`);
+  }
+}
+
 async function syncAssessment() {
   const plan = activePlan();
   if (!plan) {
     renderAssessment(null);
+    renderBuildStatus(null, null);
+    renderLiveChallenge(null, null);
     return;
   }
+
   try {
+    const previousAssessment = tutorState.latestAssessment;
     const { assessment } = await evaluateBuild({
       plan,
       sceneSnapshot: currentSnapshot(),
@@ -279,8 +605,12 @@ async function syncAssessment() {
     tutorState.setAssessment(assessment);
     renderSteps(plan, assessment);
     renderAssessment(assessment);
+    renderBuildStatus(plan, assessment);
+    renderLiveChallenge(plan, assessment);
     renderSceneInfo();
     showStepIndicator();
+    handleAssessmentObservations(plan, previousAssessment, assessment);
+    handleLiveChallengeObservations(plan, assessment);
   } catch (error) {
     console.error("Assessment sync failed:", error);
   }
@@ -299,17 +629,24 @@ function setPlan(plan, options = {}) {
   activeChallenge = options.challenge || null;
   tutorState.setPlan(normalizedPlan, { mode: options.mode || normalizedPlan.problem.mode || "guided" });
   tutorState.setPhase("plan_ready");
+  resetLiveChallengeState(normalizedPlan);
+  resetObservationState();
+
   if (answerFeedback) {
     answerFeedback.textContent = "";
     answerFeedback.classList.add("hidden");
   }
   if (answerInput) answerInput.value = "";
+
   renderPlanSummary(normalizedPlan);
-  renderPrompts(normalizedPlan);
   renderCameraBookmarks(normalizedPlan);
   renderSceneInfo();
-  renderSteps(normalizedPlan, tutorState.latestAssessment);
+  renderAssessment(null);
+  renderBuildStatus(normalizedPlan, null);
+  renderLiveChallenge(normalizedPlan, null);
+  renderSteps(normalizedPlan, null);
   showStepIndicator();
+
   if (options.clearScene !== false) {
     sceneApi.clearScene();
   }
@@ -321,6 +658,8 @@ async function handleQuestionSubmit() {
 
   tutorState.reset();
   activeChallenge = null;
+  resetObservationState();
+  resetLiveChallengeState(null);
   tutorState.setPhase("parsing");
   questionSubmit.disabled = true;
   setQuestionStatus("Asking Nova Pro for a scene plan...", "loading");
@@ -330,7 +669,8 @@ async function handleQuestionSubmit() {
     setPlan(scenePlan);
     clearChat();
     addChatMessage("system", `Question loaded: "${question}"`);
-    addChatMessage("tutor", "I turned your question into a build plan. Pick how you want to construct the scene, and I will guide the reasoning.");
+    beginGuidedBuild({ announce: false });
+    appendTutorObservation("Nova translated the text into a spatial build. Start with the active step, or open the Scene tab to place the objects manually.");
     setQuestionStatus("", "hidden");
   } catch (error) {
     console.error("Plan request failed:", error);
@@ -341,14 +681,16 @@ async function handleQuestionSubmit() {
   }
 }
 
-function beginGuidedBuild() {
+function beginGuidedBuild(options = {}) {
   const plan = activePlan();
   if (!plan) return;
   tutorState.setMode("guided");
   tutorState.setPhase(activeChallenge ? "challenge" : "guided_build");
   sceneApi.clearScene();
-  switchToTab("tutor");
-  addChatMessage("tutor", "Guided build is ready. Use the step cards to add the scene one layer at a time.");
+  switchToTab(options.tab || "tutor");
+  if (options.announce !== false) {
+    appendTutorObservation("Guided build is ready. Use the active step, or place the required shapes directly in the scene.");
+  }
   scheduleAssessment();
 }
 
@@ -359,7 +701,7 @@ function addAllSuggestedObjects() {
   tutorState.setPhase("explore");
   sceneApi.loadSnapshot(buildSceneSnapshotFromSuggestions(plan), "add-all");
   renderAnnotations();
-  addChatMessage("tutor", "The full suggested scene is in the world now. Edit it freely, and ask me to explain how the measurements connect to the formula.");
+  appendTutorObservation("The full suggested scene is now in the world. Rotate it, resize it, or ask Nova why the measurements matter.");
   scheduleAssessment();
 }
 
@@ -370,7 +712,7 @@ function beginManualBuild() {
   tutorState.setPhase(activeChallenge ? "challenge" : "manual_build");
   sceneApi.clearScene();
   switchToTab("scene");
-  addChatMessage("tutor", "Manual build mode is active. Create the geometry yourself, and I will verify what is missing or correct.");
+  appendTutorObservation("Manual build mode is active. Place the objects yourself, and Nova will count exact guided matches.");
   scheduleAssessment();
 }
 
@@ -383,41 +725,52 @@ async function sendTutorMessage(messageText) {
   tutorState.addMessage("user", text);
 
   const typing = addChatMessage("tutor", "...");
-  typing.classList.add("loading-dots");
+  typing?.classList.add("loading-dots");
 
   try {
     const response = await askTutor({
       plan,
       sceneSnapshot: currentSnapshot(),
+      sceneContext: sceneContextPayload(plan, tutorState.latestAssessment),
       learningState: tutorState.snapshot(),
       userMessage: text,
       contextStepId: tutorState.getCurrentStep()?.id || null,
       onChunk: (chunk) => {
-        typing.classList.remove("loading-dots");
-        typing.textContent = (typing.textContent === "..." ? "" : typing.textContent) + chunk;
+        typing?.classList.remove("loading-dots");
+        if (typing) {
+          typing.textContent = (typing.textContent === "..." ? "" : typing.textContent) + chunk;
+        }
         chatMessages.scrollTop = chatMessages.scrollHeight;
       },
       onAssessment: (assessment) => {
         tutorState.setAssessment(assessment);
         renderAssessment(assessment);
+        renderBuildStatus(plan, assessment);
         renderSteps(plan, assessment);
+        renderLiveChallenge(plan, assessment);
       },
     });
 
-    typing.classList.remove("loading-dots");
-    typing.textContent = response.text || "I could not generate a tutor reply.";
-    tutorState.addMessage("assistant", typing.textContent);
+    if (typing) {
+      typing.classList.remove("loading-dots");
+      typing.textContent = response.text || "I could not generate a tutor reply.";
+      tutorState.addMessage("assistant", typing.textContent);
+    }
 
     if (response.assessment) {
       tutorState.setAssessment(response.assessment);
+      renderBuildStatus(plan, response.assessment);
+      renderLiveChallenge(plan, response.assessment);
     }
 
-    if (voiceEnabled && typing.textContent) {
+    if (voiceEnabled && typing?.textContent) {
       speakText(typing.textContent);
     }
   } catch (error) {
-    typing.classList.remove("loading-dots");
-    typing.textContent = `Error: ${error.message}`;
+    if (typing) {
+      typing.classList.remove("loading-dots");
+      typing.textContent = `Error: ${error.message}`;
+    }
   }
 }
 
@@ -443,9 +796,6 @@ async function speakText(text) {
   if (!text) return;
   try {
     const response = await requestVoiceResponse(text, "auto");
-    if (voiceTranscript) {
-      voiceTranscript.textContent = response.transcript || text;
-    }
     if (response.audioBase64) {
       const binary = atob(response.audioBase64);
       const bytes = new Uint8Array(binary.length);
@@ -480,6 +830,7 @@ function bindStepList() {
       tutorState.goToStep(stepIndex);
       showStepIndicator();
       renderSteps(plan, tutorState.latestAssessment);
+      renderBuildStatus(plan, tutorState.latestAssessment);
     }
 
     if (button?.dataset.stepAction === "focus") {
@@ -522,8 +873,9 @@ async function loadChallengesList() {
         questionInput.value = challenge.question;
         tutorState.startChallenge(challenge.id, challenge.scenePlan);
         setPlan(challenge.scenePlan, { challenge, clearScene: true });
+        clearChat();
         addChatMessage("system", `Challenge: ${challenge.title}`);
-        addChatMessage("tutor", "Build the scene correctly first. The answer box unlocks after the required objects and measurements are in place.");
+        appendTutorObservation("Build the scene correctly first. When the required objects are in place, the answer box unlocks.");
         beginManualBuild();
       });
     });
@@ -560,6 +912,22 @@ async function handleAnswerSubmit() {
   }
 }
 
+function handleSceneMutation(detail) {
+  const plan = activePlan();
+  if (!plan || !detail || detail.type !== "objects" || !observationState) return;
+
+  renderSceneInfo();
+  renderLiveChallenge(plan, tutorState.latestAssessment);
+  syncUnfoldDrawer();
+
+  if (detail.reason === "place" && detail.object?.id && observationState.lastPlacedObjectId !== detail.object.id) {
+    observationState.lastPlacedObjectId = detail.object.id;
+    appendTutorObservation(`Placed ${detail.object.label || detail.object.shape}. Nova will count it against the current build step.`);
+  }
+
+  scheduleAssessment();
+}
+
 function bindEvents() {
   document.querySelectorAll(".panel-tab").forEach((button) => {
     button.addEventListener("click", () => switchToTab(button.dataset.tab));
@@ -587,19 +955,20 @@ function bindEvents() {
   });
 
   addAllBtn?.addEventListener("click", addAllSuggestedObjects);
-  stepByStepBtn?.addEventListener("click", beginGuidedBuild);
+  stepByStepBtn?.addEventListener("click", () => beginGuidedBuild());
   buildManuallyBtn?.addEventListener("click", beginManualBuild);
   hintBtn?.addEventListener("click", handleHint);
   explainBtn?.addEventListener("click", handleExplain);
   voiceToggle?.addEventListener("click", () => {
     voiceEnabled = !voiceEnabled;
     voiceToggle.classList.toggle("is-active", voiceEnabled);
-    voiceTranscript.textContent = voiceEnabled ? "Voice is enabled. Tutor responses will appear here." : "Voice is off.";
+    voiceToggle.setAttribute("aria-pressed", String(voiceEnabled));
+    voiceToggle.textContent = voiceEnabled ? "Voice On" : "Voice";
   });
 
   document.getElementById("demoBtn")?.addEventListener("click", () => {
     questionInput.value = "A cylinder has radius 3 and height 10. What is its volume?";
-    handleQuestionSubmit().then(() => beginGuidedBuild());
+    handleQuestionSubmit();
   });
 
   answerSubmit?.addEventListener("click", handleAnswerSubmit);
@@ -614,11 +983,13 @@ function bindEvents() {
     tutorState.prevStep();
     showStepIndicator();
     renderSteps(activePlan(), tutorState.latestAssessment);
+    renderBuildStatus(activePlan(), tutorState.latestAssessment);
   });
   stepNext?.addEventListener("click", () => {
     tutorState.nextStep();
     showStepIndicator();
     renderSteps(activePlan(), tutorState.latestAssessment);
+    renderBuildStatus(activePlan(), tutorState.latestAssessment);
   });
 
   bindStepList();
@@ -635,11 +1006,16 @@ function bindDom() {
   addAllBtn = document.getElementById("addAllBtn");
   stepByStepBtn = document.getElementById("stepByStepBtn");
   buildManuallyBtn = document.getElementById("buildManuallyBtn");
+  buildStatusSection = document.getElementById("buildStatusSection");
+  buildCompletionChip = document.getElementById("buildCompletionChip");
+  buildProgress = document.getElementById("buildProgress");
+  stepStatusNote = document.getElementById("stepStatusNote");
   buildStepsSection = document.getElementById("buildStepsSection");
   buildStepsList = document.getElementById("buildStepsList");
   buildGoalChip = document.getElementById("buildGoalChip");
-  challengePromptList = document.getElementById("challengePromptList");
-  voiceTranscript = document.getElementById("voiceTranscript");
+  liveChallengeSection = document.getElementById("liveChallengeSection");
+  liveChallengeChip = document.getElementById("liveChallengeChip");
+  liveChallengeCard = document.getElementById("liveChallengeCard");
   challengeList = document.getElementById("challengeList");
   scoreDisplay = document.getElementById("scoreDisplay");
   chatMessages = document.getElementById("chatMessages");
@@ -676,19 +1052,31 @@ export function initTutorController(context) {
 
   bindDom();
   bindEvents();
+  initUnfoldDrawer(context);
+  resetObservationState();
+  resetLiveChallengeState(null);
   updateHintCount();
   renderAssessment(null);
+  renderBuildStatus(null, null);
+  renderLiveChallenge(null, null);
   renderSceneInfo();
   loadChallengesList();
 
-  sceneApi.onSceneChange(() => {
+  sceneApi.onSceneEvent((detail) => {
+    if (detail.type === "objects") {
+      handleSceneMutation(detail);
+    }
+  });
+
+  sceneApi.onSelectionChange(() => {
     renderSceneInfo();
-    scheduleAssessment();
+    renderLiveChallenge(activePlan(), tutorState.latestAssessment);
+    syncUnfoldDrawer();
   });
 
   if (new URLSearchParams(window.location.search).has("demo")) {
     questionInput.value = "A cylinder has radius 3 and height 10. What is its volume?";
-    handleQuestionSubmit().then(() => beginGuidedBuild());
+    handleQuestionSubmit();
   }
 }
 
@@ -696,4 +1084,5 @@ export function updateTutorLabels() {
   if (world) {
     renderLabels(world.scene, world.camera);
   }
+  syncUnfoldDrawer();
 }

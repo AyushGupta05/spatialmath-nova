@@ -7,3 +7,5 @@ __pycache__/
 models/tf_gesture/
 node_modules/
 .env.local
+.playwright-cli/
+output/

@@ -3,14 +3,29 @@ import { clamp } from "./core/math.js";
 import { deriveScaleK, loadCalibration, saveCalibration } from "./calibration/store.js";
 import { InteractionPipeline } from "./signals/interactionPipeline.js";
 import { appState } from "./state/store.js";
+import { tutorState } from "./state/tutorState.js";
 import { createWorld } from "./render/world.js";
 import { createSceneRuntime } from "./scene/sceneRuntime.js";
+import {
+  applySceneObjectToMesh,
+  buildMeshFromSceneObject,
+  sceneObjectFromMesh,
+  sceneParamsFromMesh,
+} from "./scene/objectMesh.js";
+import {
+  baseSizeToParams,
+  defaultPositionForShape,
+  distanceBetween,
+  normalizeSceneObject,
+  paramsToBaseSize,
+  scaleSceneParams,
+} from "./scene/schema.js";
 import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
 import * as THREE from "three";
 import {
   isFistPose, isThumbsUpPose, isThumbsDownPose,
   isPointPose, isDirectPinchPose, isLinePointPinchPose,
-  lmkDist, palmScale, computeWristAngle, isPalmOpenPose,
+  lmkDist, palmScale, computeWristAngle,
 } from "./tracking/poses.js";
 import {
   HAND_CONNECTIONS, SHOW_HAND_MARKERS, HAND_OVERLAY_SCALE,
@@ -109,6 +124,7 @@ export function bootstrapApp() {
   let mousePlaceContext = null;
   let placementPreview = null;
   const sceneRuntime = createSceneRuntime({ world });
+  const sceneEventTarget = new EventTarget();
   const placedMeshes = sceneRuntime.meshes;
   const MAX_MESHES = 220;
   const calibrationPresets = {
@@ -151,6 +167,9 @@ export function bootstrapApp() {
       selectionRing.material.opacity = 0.95;
       rotationGuide.visible = false;
       renderObjectList();
+      sceneEventTarget.dispatchEvent(new CustomEvent("selection", {
+        detail: { objectId: null, mesh: null },
+      }));
       return;
     }
     sceneRuntime.setSelection(activeMesh);
@@ -160,6 +179,188 @@ export function bootstrapApp() {
     syncSelectionMarker(activeMesh);
     rotationGuide.visible = false;
     renderObjectList();
+    sceneEventTarget.dispatchEvent(new CustomEvent("selection", {
+      detail: {
+        objectId: activeMesh.userData?.sceneObjectId || null,
+        mesh: activeMesh,
+      },
+    }));
+  }
+
+  function currentPlan() {
+    return tutorState.plan;
+  }
+
+  function currentStep() {
+    return tutorState.getCurrentStep();
+  }
+
+  function currentSceneSnapshot() {
+    return sceneRuntime.snapshot();
+  }
+
+  function suggestionAlreadyPlaced(snapshot, suggestion) {
+    if (!snapshot || !suggestion) return false;
+    return snapshot.objects.some((objectSpec) => {
+      const metadata = objectSpec.metadata || {};
+      return (
+        objectSpec.id === suggestion.object.id ||
+        metadata.sourceSuggestionId === suggestion.id ||
+        metadata.suggestionId === suggestion.id ||
+        metadata.guidedObjectId === suggestion.object.id
+      );
+    });
+  }
+
+  function placementSuggestionPool() {
+    const plan = currentPlan();
+    if (!plan) return [];
+    const snapshot = currentSceneSnapshot();
+    const step = currentStep();
+    const suggestionById = new Map(plan.objectSuggestions.map((suggestion) => [suggestion.id, suggestion]));
+    const pools = [];
+
+    if (step?.requiredObjectIds?.length) {
+      pools.push(step.requiredObjectIds);
+    }
+
+    const allRequiredIds = plan.objectSuggestions
+      .filter((suggestion) => !suggestion.optional)
+      .map((suggestion) => suggestion.id);
+    pools.push(allRequiredIds);
+
+    for (const suggestionIds of pools) {
+      const suggestions = suggestionIds
+        .map((suggestionId) => suggestionById.get(suggestionId))
+        .filter(Boolean)
+        .filter((suggestion) => !suggestionAlreadyPlaced(snapshot, suggestion));
+      if (suggestions.length) {
+        return suggestions;
+      }
+    }
+
+    return [];
+  }
+
+  function resolvePlacementSuggestion(shape) {
+    const suggestions = placementSuggestionPool();
+    return suggestions.find((suggestion) => suggestion.object.shape === shape) || null;
+  }
+
+  function freePlacementObject(shape) {
+    const params = baseSizeToParams(shape, Number(sizeInputEl?.value || 1));
+    return normalizeSceneObject({
+      shape,
+      color: colorInputEl?.value || "#7cf7e4",
+      position: defaultPositionForShape(shape, params),
+      rotation: [0, 0, 0],
+      params,
+      metadata: { source: "manual-free-placement" },
+    });
+  }
+
+  function buildPlacementTemplate(shape) {
+    const suggestion = resolvePlacementSuggestion(shape);
+    const objectSpec = suggestion
+      ? normalizeSceneObject(structuredClone(suggestion.object))
+      : freePlacementObject(shape);
+    const metadata = {
+      ...(objectSpec.metadata || {}),
+      source: suggestion ? "guided-placement" : "manual-placement",
+      sourceSuggestionId: suggestion?.id || null,
+      suggestionId: suggestion?.id || null,
+      sourceStepId: currentStep()?.id || null,
+      guidedObjectId: suggestion?.object?.id || objectSpec.id || null,
+      planId: currentPlan()?.problem?.id || null,
+    };
+    return {
+      suggestion,
+      objectSpec: normalizeSceneObject({
+        ...objectSpec,
+        metadata,
+      }),
+    };
+  }
+
+  function buildSceneObjectForMesh(mesh, overrides = {}) {
+    const baseObject = sceneObjectFromMesh(mesh);
+    return normalizeSceneObject({
+      ...baseObject,
+      ...overrides,
+      params: overrides.params || baseObject.params,
+      metadata: {
+        ...(baseObject.metadata || {}),
+        ...(overrides.metadata || {}),
+      },
+    });
+  }
+
+  function applySceneObjectUpdate(mesh, objectSpec, reason = "object-update") {
+    if (!mesh) return null;
+    applySceneObjectToMesh(world, mesh, objectSpec);
+    updateMeshMetadata(mesh);
+    sceneRuntime.notifySceneChanged(reason, mesh);
+    return mesh;
+  }
+
+  function applySceneParamsUpdate(mesh, params, reason = "params-update") {
+    if (!mesh) return null;
+    const nextObject = buildSceneObjectForMesh(mesh, { params });
+    applySceneObjectToMesh(world, mesh, nextObject);
+    if (mesh.userData?.shape !== "line" && mesh.userData?.floorLocked !== false) {
+      alignMeshToGround(mesh);
+    }
+    updateMeshMetadata(mesh);
+    sceneRuntime.notifySceneChanged(reason, mesh);
+    return mesh;
+  }
+
+  function scaleMeshSceneObject(mesh, ratio, reason = "scale") {
+    if (!mesh) return null;
+    const shape = mesh.userData?.shape || "cube";
+    const nextParams = scaleSceneParams(shape, sceneParamsFromMesh(mesh), ratio);
+    return applySceneParamsUpdate(mesh, nextParams, reason);
+  }
+
+  function interpolateSceneParams(shape, fromParams, toParams, t = TRANSFORM_SCALE_SMOOTHING) {
+    const lerpNumber = (fromValue, toValue) => THREE.MathUtils.lerp(Number(fromValue || 0), Number(toValue || 0), t);
+
+    switch (shape) {
+      case "cube":
+        return { size: lerpNumber(fromParams.size, toParams.size) };
+      case "cuboid":
+        return {
+          width: lerpNumber(fromParams.width, toParams.width),
+          height: lerpNumber(fromParams.height, toParams.height),
+          depth: lerpNumber(fromParams.depth, toParams.depth),
+        };
+      case "sphere":
+        return { radius: lerpNumber(fromParams.radius, toParams.radius) };
+      case "cylinder":
+      case "cone":
+        return {
+          radius: lerpNumber(fromParams.radius, toParams.radius),
+          height: lerpNumber(fromParams.height, toParams.height),
+        };
+      case "pyramid":
+        return {
+          base: lerpNumber(fromParams.base, toParams.base),
+          height: lerpNumber(fromParams.height, toParams.height),
+        };
+      case "plane":
+        return {
+          width: lerpNumber(fromParams.width, toParams.width),
+          depth: lerpNumber(fromParams.depth, toParams.depth),
+        };
+      case "line":
+        return {
+          start: fromParams.start.map((value, index) => lerpNumber(value, toParams.start[index])),
+          end: fromParams.end.map((value, index) => lerpNumber(value, toParams.end[index])),
+          thickness: lerpNumber(fromParams.thickness, toParams.thickness),
+        };
+      default:
+        return toParams;
+    }
   }
 
   function disposePlacementPreview() {
@@ -230,6 +431,13 @@ export function bootstrapApp() {
     world.updateLineMesh(mesh, startHit, endHit, size);
     mesh.userData.lineStart = startHit.toArray();
     mesh.userData.lineEnd = endHit.toArray();
+    mesh.userData.sceneParams = {
+      ...(mesh.userData.sceneParams || {}),
+      start: [...mesh.userData.lineStart],
+      end: [...mesh.userData.lineEnd],
+      thickness: mesh.userData?.sceneParams?.thickness || Math.max(0.08, size * 0.08),
+    };
+    mesh.userData.baseSize = paramsToBaseSize("line", mesh.userData.sceneParams);
   }
 
   function resolvePlacementTarget(targetLike, fallbackFloorLocked = true) {
@@ -618,9 +826,23 @@ export function bootstrapApp() {
     return endpoint;
   }
 
-  function syncPreviewMeshAppearance(mesh, shape, color) {
+  function syncPreviewMeshAppearance(mesh, shape, color, previewObjectSpec = null) {
     if (!mesh) return;
-    if (mesh.userData.previewShape !== shape) {
+    const previewShape = previewObjectSpec?.shape || shape;
+    const previewColor = previewObjectSpec?.color || color;
+    const previewKey = previewObjectSpec
+      ? JSON.stringify({
+        shape: previewObjectSpec.shape,
+        color: previewObjectSpec.color,
+        params: previewObjectSpec.params,
+      })
+      : null;
+
+    if (previewObjectSpec && mesh.userData.previewObjectKey !== previewKey) {
+      applySceneObjectToMesh(world, mesh, previewObjectSpec);
+      mesh.userData.previewShape = previewShape;
+      mesh.userData.previewObjectKey = previewKey;
+    } else if (!previewObjectSpec && mesh.userData.previewShape !== previewShape) {
       const nextMesh = shape === "line"
         ? world.buildLineMesh(
           placementPreview?.lineStartHit || new THREE.Vector3(0, 0, 0),
@@ -635,9 +857,10 @@ export function bootstrapApp() {
       mesh.material = nextMesh.material;
       oldGeometry?.dispose?.();
       oldMaterial?.dispose?.();
-      mesh.userData.previewShape = shape;
+      mesh.userData.previewShape = previewShape;
+      delete mesh.userData.previewObjectKey;
     }
-    mesh.material.color.set(color);
+    mesh.material.color.set(previewColor);
     mesh.material.emissive.copy(mesh.material.color).multiplyScalar(0.08);
     mesh.material.opacity = PLACEMENT_PREVIEW_OPACITY;
     mesh.material.transparent = true;
@@ -659,6 +882,30 @@ export function bootstrapApp() {
       anchoredHit.y = 0;
     }
     return anchoredHit;
+  }
+
+  function lineUsesSuggestedPlacement() {
+    return Boolean(resolvePlacementSuggestion("line"));
+  }
+
+  function createGuidedLinePlacementPreview(template) {
+    const mesh = buildMeshFromSceneObject(world, template.objectSpec);
+    world.scene.add(mesh);
+    placementPreview = {
+      shape: "line",
+      mesh,
+      pointMarker: null,
+      previewSize: paramsToBaseSize("line", template.objectSpec.params),
+      lineStartHit: new THREE.Vector3(...template.objectSpec.params.start),
+      lineEndHit: new THREE.Vector3(...template.objectSpec.params.end),
+      guidedLine: true,
+      floorLocked: false,
+      objectSpec: template.objectSpec,
+      sourceSuggestionId: template.suggestion?.id || null,
+      blockedBy: null,
+    };
+    syncPreviewMeshAppearance(mesh, "line", template.objectSpec.color, template.objectSpec);
+    return placementPreview;
   }
 
   function createLinePlacementPreview(startHit, startLandmark, nextColor, nextSize, floorLocked = true) {
@@ -683,6 +930,24 @@ export function bootstrapApp() {
   }
 
   function ensureLinePlacementPreview(hitPoint = null, contactLandmark = null) {
+    if (lineUsesSuggestedPlacement()) {
+      const template = buildPlacementTemplate("line");
+      if (!template?.suggestion) return null;
+      if (
+        !placementPreview?.mesh ||
+        !placementPreview.guidedLine ||
+        placementPreview.sourceSuggestionId !== template.suggestion.id
+      ) {
+        disposePlacementPreview();
+        return createGuidedLinePlacementPreview(template);
+      }
+      placementPreview.objectSpec = template.objectSpec;
+      placementPreview.lineStartHit = new THREE.Vector3(...template.objectSpec.params.start);
+      placementPreview.lineEndHit = new THREE.Vector3(...template.objectSpec.params.end);
+      syncPreviewMeshAppearance(placementPreview.mesh, "line", template.objectSpec.color, template.objectSpec);
+      return placementPreview;
+    }
+
     const nextColor = colorInputEl.value;
     const nextSize = Number(sizeInputEl.value);
     const previewTarget = placementPreview?.shape === "line"
@@ -749,14 +1014,12 @@ export function bootstrapApp() {
     const anchorHit = placementPreview?.anchorHit || anchoredPlacementHit(previewTarget);
     if (!anchorHit) return null;
     const nextShape = shapeTypeEl.value;
-    const nextColor = colorInputEl.value;
-    const nextSize = Number(sizeInputEl.value);
+    const template = buildPlacementTemplate(nextShape);
     const floorLocked = previewTarget?.floorLocked !== false;
 
     if (!placementPreview?.mesh) {
-      const mesh = world.buildMesh(nextShape, nextSize, nextColor);
+      const mesh = buildMeshFromSceneObject(world, template.objectSpec);
       mesh.userData.previewShape = nextShape;
-      mesh.userData.previewSize = nextSize;
       world.scene.add(mesh);
       placementPreview = {
         shape: nextShape,
@@ -767,34 +1030,16 @@ export function bootstrapApp() {
         surfaceNormal: previewTarget?.surfaceNormal?.clone?.() || null,
         referenceMesh: previewTarget?.referenceMesh || null,
         blockedBy: null,
+        objectSpec: template.objectSpec,
+        sourceSuggestionId: template.suggestion?.id || null,
       };
     }
 
-    if (placementPreview.mesh.userData.previewSize !== nextSize) {
-      const fixedAnchorHit = placementPreview.anchorHit.clone();
-      const fixedFloorLocked = placementPreview.floorLocked !== false;
-      const fixedReferencePoint = placementPreview.referencePoint?.clone?.() || null;
-      const fixedSurfaceNormal = placementPreview.surfaceNormal?.clone?.() || null;
-      const fixedReferenceMesh = placementPreview.referenceMesh || null;
-      disposePlacementPreview();
-      const mesh = world.buildMesh(nextShape, nextSize, nextColor);
-      mesh.userData.previewShape = nextShape;
-      mesh.userData.previewSize = nextSize;
-      world.scene.add(mesh);
-      placementPreview = {
-        shape: nextShape,
-        mesh,
-        anchorHit: fixedAnchorHit,
-        floorLocked: fixedFloorLocked,
-        referencePoint: fixedReferencePoint,
-        surfaceNormal: fixedSurfaceNormal,
-        referenceMesh: fixedReferenceMesh,
-        blockedBy: null,
-      };
-    }
+    placementPreview.objectSpec = template.objectSpec;
+    placementPreview.sourceSuggestionId = template.suggestion?.id || null;
 
     const previewMesh = placementPreview.mesh;
-    syncPreviewMeshAppearance(previewMesh, nextShape, nextColor);
+    syncPreviewMeshAppearance(previewMesh, nextShape, template.objectSpec.color, template.objectSpec);
     const anchorSource = placementPreview.surfaceNormal
       ? placementPreview
       : (placementPreview.anchorHit ? { point: placementPreview.anchorHit, floorLocked: placementPreview.floorLocked } : previewTarget);
@@ -823,34 +1068,40 @@ export function bootstrapApp() {
       setStatus(`Move the preview clear of ${label} before placing`, "idle");
       return false;
     }
-    if (placementPreview.shape === "line") {
+    if (placementPreview.shape === "line" && !placementPreview.guidedLine) {
       if (!placementPreview.lineEndHit || lineLength(placementPreview.lineStartHit, placementPreview.lineEndHit) < 0.08) {
         setStatus("Pick a second point a little farther away for the line end", "idle");
         return false;
       }
     }
-    const mesh = placementPreview.mesh;
-    mesh.material.opacity = 0.9;
-    mesh.material.depthWrite = true;
-    mesh.userData.shape = shapeTypeEl.value;
-    mesh.userData.baseSize = Number(sizeInputEl.value);
-    mesh.userData.floorLocked = placementPreview.floorLocked !== false;
-    delete mesh.userData.previewShape;
-    delete mesh.userData.previewSize;
-    if (placementPreview.shape === "line") {
-      applyLineEndpoints(mesh, placementPreview.lineStartHit, placementPreview.lineEndHit, Number(sizeInputEl.value));
-    } else {
-      delete mesh.userData.lineStart;
-      delete mesh.userData.lineEnd;
-    }
-    ensureMeshIdentity(mesh);
+
+    const previewObject = placementPreview.objectSpec || buildPlacementTemplate(placementPreview.shape).objectSpec;
+    const objectSpec = placementPreview.shape === "line"
+      ? normalizeSceneObject({
+        ...previewObject,
+        position: placementPreview.guidedLine
+          ? previewObject.position
+          : placementPreview.lineStartHit.clone().lerp(placementPreview.lineEndHit, 0.5).toArray(),
+        params: placementPreview.guidedLine
+          ? previewObject.params
+          : {
+            start: placementPreview.lineStartHit.toArray(),
+            end: placementPreview.lineEndHit.toArray(),
+            thickness: previewObject.params?.thickness || Math.max(0.08, Number(sizeInputEl.value) * 0.08),
+          },
+      })
+      : normalizeSceneObject({
+        ...previewObject,
+        position: placementPreview.anchorHit.toArray(),
+      });
+
+    disposePlacementPreview();
+    const mesh = sceneRuntime.addObject(objectSpec, { reason: "place" });
     updateMeshMetadata(mesh);
-    sceneRuntime.registerMesh(mesh, { metadata: { source: "manual" } }, "place");
     enforceMeshBudget();
     updateGeometryMetrics(mesh.userData.shape, mesh.userData.baseSize, mesh);
     setActiveMesh(null);
-    setStatus(`Placed ${mesh.userData.shape}`, "ok");
-    placementPreview = null;
+    setStatus(`Placed ${mesh.userData.label || mesh.userData.shape}`, "ok");
     lastOperationAt = now;
     return true;
   }
@@ -867,7 +1118,15 @@ export function bootstrapApp() {
 
   function currentMousePlaceLabel() {
     if (shapeTypeEl.value === "line") {
+      if (lineUsesSuggestedPlacement()) {
+        const suggestion = resolvePlacementSuggestion("line");
+        return suggestion?.title ? `Place ${suggestion.title}` : "Place Guided Line";
+      }
       return placementPreview?.shape === "line" ? "Place Line End" : "Place Line Start";
+    }
+    const suggestion = resolvePlacementSuggestion(shapeTypeEl.value);
+    if (suggestion?.title) {
+      return `Place ${suggestion.title}`;
     }
     const shapeName = shapeTypeEl.value.charAt(0).toUpperCase() + shapeTypeEl.value.slice(1);
     return `Place ${shapeName}`;
@@ -920,6 +1179,14 @@ export function bootstrapApp() {
       if (placementPreview?.shape && placementPreview.shape !== "line") {
         disposePlacementPreview();
       }
+      if (lineUsesSuggestedPlacement()) {
+        ensurePlacementPreview(placementTarget, landmark);
+        if (confirmPlacementPreview(now)) {
+          lastSpawnAt = now;
+          return true;
+        }
+        return false;
+      }
       if (placementPreview?.shape !== "line") {
         ensurePlacementPreview(placementTarget, landmark);
         setStatus("Line start placed. Right click again to place the end", "ok");
@@ -944,24 +1211,33 @@ export function bootstrapApp() {
     return false;
   }
 
-  function beginTransformSession(mesh, hitA, hitB, palmA, palmB, now) {
-    if (!mesh || !hitA || !hitB || !palmA || !palmB) return false;
+  function refreshTransformSessionAnchors(session, hitA, hitB, leftHand, rightHand) {
+    if (!session?.mesh || !hitA || !hitB) return;
+    session.startSpan = Math.max(MIN_TRANSFORM_SPAN, planarDistance(hitA, hitB));
+    session.startParams = sceneParamsFromMesh(session.mesh);
+    session.startRotationX = session.mesh.rotation.x || 0;
+    session.startRotationY = session.mesh.rotation.y || 0;
+    session.startLeftWristAngle = computeWristAngle(leftHand);
+    session.startRightWristAngle = computeWristAngle(rightHand);
+  }
+
+  function beginTransformSession(mesh, hitA, hitB, leftHand, rightHand, now) {
+    if (!mesh || !hitA || !hitB || !leftHand || !rightHand) return false;
 
     const span = Math.max(MIN_TRANSFORM_SPAN, planarDistance(hitA, hitB));
-    const startingScale = {
-      x: clamp(mesh.scale.x || 1, MIN_MESH_SCALE, MAX_MESH_SCALE),
-      y: clamp(mesh.scale.y || 1, MIN_MESH_SCALE, MAX_MESH_SCALE),
-      z: clamp(mesh.scale.z || 1, MIN_MESH_SCALE, MAX_MESH_SCALE),
-    };
 
     setActiveMesh(mesh);
     transformSession = {
       mesh,
       startSpan: span,
-      startScale: startingScale,
+      startParams: sceneParamsFromMesh(mesh),
+      startRotationX: mesh.rotation.x || 0,
+      startRotationY: mesh.rotation.y || 0,
+      startLeftWristAngle: computeWristAngle(leftHand),
+      startRightWristAngle: computeWristAngle(rightHand),
     };
     selectionRing.userData.pulseStartAt = now;
-    setStatus("Transform locked: keep both hands visible and spread to resize", "ok");
+    setStatus("Transform locked: spread to resize, left wrist rotates Y, right wrist rotates X", "ok");
     return true;
   }
 
@@ -1687,21 +1963,86 @@ export function bootstrapApp() {
     return placedMeshes.find((item) => Number(item.userData?.objectSerial) === Number(objectSerial)) || null;
   }
 
+  function dimensionFieldsForMesh(mesh) {
+    const shape = mesh?.userData?.shape || "cube";
+    const params = sceneParamsFromMesh(mesh);
+
+    switch (shape) {
+      case "cube":
+        return [{ key: "size", label: "Size", value: params.size, step: 0.01 }];
+      case "cuboid":
+        return [
+          { key: "width", label: "W", value: params.width, step: 0.01 },
+          { key: "height", label: "H", value: params.height, step: 0.01 },
+          { key: "depth", label: "D", value: params.depth, step: 0.01 },
+        ];
+      case "sphere":
+        return [{ key: "radius", label: "Radius", value: params.radius, step: 0.01 }];
+      case "cylinder":
+      case "cone":
+        return [
+          { key: "radius", label: "Radius", value: params.radius, step: 0.01 },
+          { key: "height", label: "Height", value: params.height, step: 0.01 },
+        ];
+      case "pyramid":
+        return [
+          { key: "base", label: "Base", value: params.base, step: 0.01 },
+          { key: "height", label: "Height", value: params.height, step: 0.01 },
+        ];
+      case "plane":
+        return [
+          { key: "width", label: "W", value: params.width, step: 0.01 },
+          { key: "depth", label: "D", value: params.depth, step: 0.01 },
+        ];
+      case "line":
+        return [
+          { key: "length", label: "Length", value: distanceBetween(params.start, params.end), step: 0.01 },
+          { key: "thickness", label: "Thickness", value: params.thickness, step: 0.01 },
+        ];
+      default:
+        return [];
+    }
+  }
+
+  function updateMeshParamValue(objectSerial, key, rawValue) {
+    const mesh = findMeshBySerial(objectSerial);
+    if (!mesh) return null;
+
+    const nextValue = Math.max(0.01, Number(rawValue || 0));
+    const nextParams = sceneParamsFromMesh(mesh);
+
+    if (mesh.userData?.shape === "line") {
+      if (key === "thickness") {
+        nextParams.thickness = nextValue;
+      } else if (key === "length") {
+        const start = new THREE.Vector3(...nextParams.start);
+        const end = new THREE.Vector3(...nextParams.end);
+        const midpoint = start.clone().lerp(end, 0.5);
+        const direction = end.clone().sub(start);
+        if (direction.lengthSq() <= 1e-6) {
+          direction.set(1, 0, 0);
+        }
+        direction.normalize();
+        const halfSpan = direction.multiplyScalar(nextValue * 0.5);
+        nextParams.start = midpoint.clone().sub(halfSpan).toArray();
+        nextParams.end = midpoint.clone().add(halfSpan).toArray();
+      }
+    } else {
+      nextParams[key] = nextValue;
+    }
+
+    applySceneParamsUpdate(mesh, nextParams, "params");
+    updateGeometryMetrics(mesh.userData.shape || shapeTypeEl.value, mesh.userData.baseSize, mesh);
+    refreshDebug();
+    return nextValue;
+  }
+
   function updateMeshScaleValue(objectSerial, rawValue) {
     const mesh = findMeshBySerial(objectSerial);
     if (!mesh) return null;
     const nextScale = clampScaleValue(rawValue);
-    mesh.scale.setScalar(nextScale);
-    if (mesh.userData?.shape !== "line") {
-      alignMeshToGround(mesh);
-    }
-    updateMeshMetadata(mesh);
-    updateGeometryMetrics(
-      mesh.userData.shape || shapeTypeEl.value,
-      Number(mesh.userData.baseSize || sizeInputEl.value) * nextScale,
-      mesh
-    );
-    sceneRuntime.notifySceneChanged("scale", mesh);
+    scaleMeshSceneObject(mesh, nextScale, "scale");
+    updateGeometryMetrics(mesh.userData.shape || shapeTypeEl.value, mesh.userData.baseSize, mesh);
     refreshDebug();
     return nextScale;
   }
@@ -1737,19 +2078,11 @@ export function bootstrapApp() {
 
   function updateMeshScaleAxisValue(objectSerial, axis, rawValue) {
     const mesh = findMeshBySerial(objectSerial);
-    if (!mesh?.scale) return null;
+    if (!mesh) return null;
     const nextScale = clampScaleValue(rawValue);
-    mesh.scale[axis] = nextScale;
-    if (mesh.userData?.shape !== "line") {
-      alignMeshToGround(mesh);
-    }
-    updateMeshMetadata(mesh);
-    updateGeometryMetrics(
-      mesh.userData.shape || shapeTypeEl.value,
-      Number(mesh.userData.baseSize || sizeInputEl.value) * meshScaleValue(mesh),
-      mesh
-    );
-    sceneRuntime.notifySceneChanged("scale-axis", mesh);
+    const ratio = nextScale / Math.max(0.0001, meshScaleAxisValue(mesh, axis));
+    scaleMeshSceneObject(mesh, ratio, "scale-axis");
+    updateGeometryMetrics(mesh.userData.shape || shapeTypeEl.value, mesh.userData.baseSize, mesh);
     refreshDebug();
     return nextScale;
   }
@@ -1802,35 +2135,35 @@ export function bootstrapApp() {
       color = colorHex(mesh);
     }
 
-    const currentSize = Number(mesh.userData.baseSize || 1);
+    const currentObject = sceneObjectFromMesh(mesh);
+    const currentSize = paramsToBaseSize(currentObject.shape, currentObject.params);
     const lineEndpoints = lineEndpointsForMesh(mesh);
-    const tempMesh = shape === "line"
-      ? world.buildLineMesh(lineEndpoints.start, lineEndpoints.end, currentSize, color)
-      : world.buildMesh(shape, currentSize, color);
-    const oldGeometry = mesh.geometry;
-    const oldMaterial = mesh.material;
+    const nextObject = normalizeSceneObject({
+      ...currentObject,
+      shape,
+      color,
+      params: shape === currentObject.shape
+        ? currentObject.params
+        : (
+          shape === "line"
+            ? {
+              start: lineEndpoints.start.toArray(),
+              end: lineEndpoints.end.toArray(),
+              thickness: Math.max(0.08, currentSize * 0.08),
+            }
+            : baseSizeToParams(shape, currentSize)
+        ),
+    });
 
-    mesh.geometry = tempMesh.geometry;
-    mesh.material = tempMesh.material;
-    mesh.userData.shape = shape;
+    applySceneObjectToMesh(world, mesh, nextObject);
     mesh.userData.baseEmissive = mesh.material.emissive.getHex();
-    if (shape === "line") {
-      applyLineEndpoints(mesh, lineEndpoints.start, lineEndpoints.end, currentSize);
-    } else {
+    if (shape !== "line") {
       delete mesh.userData.lineStart;
       delete mesh.userData.lineEnd;
       alignMeshToGround(mesh);
     }
     updateMeshMetadata(mesh);
-    updateGeometryMetrics(
-      shape,
-      Number(mesh.userData.baseSize || sizeInputEl?.value || 1) *
-        ((Math.abs(mesh.scale.x || 1) + Math.abs(mesh.scale.y || 1) + Math.abs(mesh.scale.z || 1)) / 3),
-      mesh
-    );
-
-    oldGeometry?.dispose?.();
-    oldMaterial?.dispose?.();
+    updateGeometryMetrics(shape, mesh.userData.baseSize || currentSize, mesh);
     if (mesh === activeMesh && mesh.material?.emissive) {
       mesh.material.emissive.setHex(0x2ccbd3);
     }
@@ -1918,17 +2251,36 @@ export function bootstrapApp() {
       const label = mesh.userData.label;
       const shape = mesh.userData?.shape || "cube";
       const color = colorHex(mesh);
+      const dimensions = dimensionFieldsForMesh(mesh);
       const posXValue = meshPositionAxisValue(mesh, "x").toFixed(2);
       const posYValue = meshPositionAxisValue(mesh, "y").toFixed(2);
       const posZValue = meshPositionAxisValue(mesh, "z").toFixed(2);
-      const scaleXValue = meshScaleAxisValue(mesh, "x").toFixed(2);
-      const scaleYValue = meshScaleAxisValue(mesh, "y").toFixed(2);
-      const scaleZValue = meshScaleAxisValue(mesh, "z").toFixed(2);
       const rotationXValue = normalizeRotationDegrees(meshRotationAxisDegrees(mesh, "x")).toFixed(0);
       const rotationYValue = normalizeRotationDegrees(meshRotationAxisDegrees(mesh, "y")).toFixed(0);
       const rotationZValue = normalizeRotationDegrees(meshRotationAxisDegrees(mesh, "z")).toFixed(0);
+      const dimensionMarkup = dimensions.length
+        ? `
+          <div class="dimension-grid">
+            ${dimensions.map((field) => `
+              <label class="dimension-field-wrap">
+                <span class="dimension-label">${escapeHtml(field.label)}</span>
+                <input
+                  class="dimension-field"
+                  type="number"
+                  min="0.01"
+                  step="${escapeHtml(field.step.toString())}"
+                  data-param="${escapeHtml(field.key)}"
+                  data-object-serial="${mesh.userData.objectSerial}"
+                  value="${escapeHtml(Number(field.value || 0).toFixed(2))}"
+                />
+              </label>
+            `).join("")}
+          </div>
+        `
+        : "";
       const inspector = mesh === activeMesh ? `
         <div class="transform-card">
+          ${dimensionMarkup}
           <div class="transform-grid transform-grid-head">
             <span class="transform-spacer"></span>
             <span>X</span>
@@ -1946,12 +2298,6 @@ export function bootstrapApp() {
             <input class="transform-field" type="number" step="1" data-transform="rotation" data-axis="x" data-object-serial="${mesh.userData.objectSerial}" value="${escapeHtml(rotationXValue)}" />
             <input class="transform-field" type="number" step="1" data-transform="rotation" data-axis="y" data-object-serial="${mesh.userData.objectSerial}" value="${escapeHtml(rotationYValue)}" />
             <input class="transform-field" type="number" step="1" data-transform="rotation" data-axis="z" data-object-serial="${mesh.userData.objectSerial}" value="${escapeHtml(rotationZValue)}" />
-          </div>
-          <div class="transform-grid">
-            <span class="transform-label">Scale</span>
-            <input class="transform-field" type="number" min="${MIN_MESH_SCALE}" max="${MAX_MESH_SCALE}" step="0.01" data-transform="scale" data-axis="x" data-object-serial="${mesh.userData.objectSerial}" value="${escapeHtml(scaleXValue)}" />
-            <input class="transform-field" type="number" min="${MIN_MESH_SCALE}" max="${MAX_MESH_SCALE}" step="0.01" data-transform="scale" data-axis="y" data-object-serial="${mesh.userData.objectSerial}" value="${escapeHtml(scaleYValue)}" />
-            <input class="transform-field" type="number" min="${MIN_MESH_SCALE}" max="${MAX_MESH_SCALE}" step="0.01" data-transform="scale" data-axis="z" data-object-serial="${mesh.userData.objectSerial}" value="${escapeHtml(scaleZValue)}" />
           </div>
         </div>
       ` : "";
@@ -2157,7 +2503,7 @@ export function bootstrapApp() {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
 
-    const text = "LOCKED";
+    const text = transformSession ? "LOCKED  R:X  L:Y" : "LOCKED";
     const padX = 8;
     const padY = 4;
     const w = ctx.measureText(text).width + padX * 2;
@@ -2201,18 +2547,35 @@ export function bootstrapApp() {
     }, null, 2);
   }
 
-  function updateGeometryMetrics(shape, size, mesh = null) {
-    let metrics;
-    if (shape === "sphere") metrics = computeGeometry(shape, { r: size * 0.6 });
-    else if (shape === "cylinder") metrics = computeGeometry(shape, { r: size * 0.45, h: size * 1.4 });
-    else if (shape === "cuboid") metrics = computeGeometry(shape, { w: size * 1.6, h: size, d: size * 0.9 });
-    else if (shape === "line") {
+  function geometryParamsForShape(shape, size, mesh = null) {
+    if (mesh) {
+      return sceneParamsFromMesh(mesh);
+    }
+
+    if (shape === "sphere") return { radius: size * 0.6 };
+    if (shape === "cylinder") return { radius: size * 0.45, height: size * 1.4 };
+    if (shape === "cone") return { radius: size * 0.5, height: size };
+    if (shape === "cuboid") return { width: size * 1.6, height: size, depth: size * 0.9 };
+    if (shape === "pyramid") return { base: size, height: size };
+    if (shape === "plane") return { width: size * 2, depth: size * 2 };
+    if (shape === "line") {
       const endpoints = mesh ? lineEndpointsForMesh(mesh) : null;
-      metrics = computeGeometry(shape, { length: endpoints ? lineLength(endpoints.start, endpoints.end) : size });
-    } else metrics = computeGeometry("cube", { a: size });
+      return {
+        start: endpoints ? endpoints.start.toArray() : [0, 0.03, 0],
+        end: endpoints ? endpoints.end.toArray() : [size, 0.03, 0],
+        thickness: Math.max(0.08, size * 0.08),
+      };
+    }
+    if (shape === "cube") return { size };
+    return { size };
+  }
+
+  function updateGeometryMetrics(shape, size, mesh = null) {
+    const params = geometryParamsForShape(shape, size, mesh);
+    const metrics = computeGeometry(shape, params);
 
     appState.shape = shape;
-    appState.dimension = size;
+    appState.dimension = mesh ? paramsToBaseSize(shape, params) : size;
     appState.volume = metrics.volume;
     appState.surfaceArea = metrics.surfaceArea;
   }
@@ -2541,7 +2904,19 @@ export function bootstrapApp() {
         const hadLineDraft = placementPreview?.shape === "line";
 
         if (lineToolActive) {
-          if (!hadLineDraft && canSpawn && pinchPlacement && primaryContactLandmark && pinchStart) {
+          if (lineUsesSuggestedPlacement()) {
+            const shouldConjurePreview =
+              !placementPreview &&
+              canSpawn &&
+              pinchPlacement &&
+              (pinchStart || placementPulseTrigger);
+            if (shouldConjurePreview) {
+              ensurePlacementPreview(pinchPlacement, primaryContactLandmark);
+              lastSpawnAt = now;
+            } else if (placementPreview) {
+              ensurePlacementPreview(pinchPlacement, primaryContactLandmark);
+            }
+          } else if (!hadLineDraft && canSpawn && pinchPlacement && primaryContactLandmark && pinchStart) {
             ensurePlacementPreview(pinchPlacement, primaryContactLandmark);
             setStatus("Line start placed. Move to the next point and pinch again to finish", "ok");
           } else if (hadLineDraft) {
@@ -2569,7 +2944,7 @@ export function bootstrapApp() {
         if (placementPreview && thumbsDownPose) {
           disposePlacementPreview();
           setStatus("Placement cancelled", "idle");
-        } else if (!lineToolActive && placementPreview && thumbsUpPose && canOperate) {
+        } else if (placementPreview && thumbsUpPose && canOperate) {
           confirmPlacementPreview(now);
         }
 
@@ -2587,32 +2962,7 @@ export function bootstrapApp() {
         rotationSession = null;
         pendingTransformCandidate = null;
         pendingTransformSince = null;
-
-        // Wrist rotation: when an object is selected and palm is open (not pinching/fisting),
-        // twist your wrist to rotate the object around Y axis.
-        if (activeMesh && primary && isPalmOpenPose(primary) && !pinchActive && !placementPreview) {
-          const wristAngle = computeWristAngle(primary);
-          if (wristAngle !== null) {
-            if (!wristRotSession) {
-              wristRotSession = { startAngle: wristAngle, startRotY: activeMesh.rotation.y };
-              setStatus("Wrist rotation: twist to rotate object", "ok");
-            } else {
-              const delta = Math.atan2(
-                Math.sin(wristAngle - wristRotSession.startAngle),
-                Math.cos(wristAngle - wristRotSession.startAngle)
-              );
-              // Scale factor 2 maps wrist twist range to a useful rotation range
-              const targetRot = wristRotSession.startRotY + delta * 2;
-              activeMesh.rotation.y = THREE.MathUtils.lerp(
-                activeMesh.rotation.y, targetRot, TRANSFORM_ROTATION_SMOOTHING
-              );
-              syncSelectionMarker(activeMesh);
-              updateMeshMetadata(activeMesh);
-            }
-          }
-        } else {
-          wristRotSession = null;
-        }
+        wristRotSession = null;
 
         prevPlacementPulseActive = placementPulseActive;
         prevPinch = pinchActive;
@@ -2626,92 +2976,80 @@ export function bootstrapApp() {
         prevPinch = false;
         transformMissingHandSince = null;
 
-        if (pointActive && primary && secondary) {
-          pendingTransformCandidate = null;
-          pendingTransformSince = null;
-          const rotationAngle = twoHandRotationAngle(primaryIndexHit, secondaryIndexHit, primary, secondary);
-          const target = (!rotationSession?.mesh || !prevPointPose)
-            ? pickRotationTarget(indexMidpoint, palmMidpoint, primary?.[8], secondary?.[8])
-            : rotationSession.mesh;
-          if (target && (!rotationSession?.mesh || !prevPointPose)) {
-            beginRotationSession(target, rotationAngle, now);
-          }
-          if (rotationSession?.mesh && Number.isFinite(rotationAngle)) {
-            const delta = shortestAngleDelta(rotationSession.startPointerAngle, rotationAngle);
-            const targetRotation = snapRotation(rotationSession.startRotationY + delta);
-            rotationSession.mesh.rotation.y = THREE.MathUtils.lerp(
-              rotationSession.mesh.rotation.y,
-              targetRotation,
-              TRANSFORM_ROTATION_SMOOTHING
-            );
-            syncSelectionMarker(rotationSession.mesh);
-          }
-        } else {
-          if (rotationSession && !transformSession) {
-            setActiveMesh(null);
-          }
-          rotationSession = null;
-        }
+        rotationSession = null;
 
-        if (!pointActive && handCount >= 2 && primaryPalmHit && secondaryPalmHit && primaryPalm && secondaryPalm) {
+        if (handCount >= 2 && primaryPalmHit && secondaryPalmHit && primary && secondary) {
           if (!transformSession) {
             const candidate = pickMeshForTransform(primaryPalmHit, secondaryPalmHit, primaryPalm, secondaryPalm);
             const canLock = updatePendingTransformCandidate(candidate, now);
             if (candidate && canLock) {
-              beginTransformSession(candidate, primaryPalmHit, secondaryPalmHit, primaryPalm, secondaryPalm, now);
+              beginTransformSession(candidate, primaryPalmHit, secondaryPalmHit, primary, secondary, now);
             }
           } else {
             pendingTransformCandidate = null;
             pendingTransformSince = null;
           }
-        } else if (!pointActive) {
+        } else {
           pendingTransformCandidate = null;
           pendingTransformSince = null;
         }
 
-        if (!pointActive && transformSession?.mesh && primaryPalm && secondaryPalm && primaryPalmHit && secondaryPalmHit) {
-          if (prevPointPose || handReturnThisFrame) {
-            transformSession.startSpan = Math.max(MIN_TRANSFORM_SPAN, planarDistance(primaryPalmHit, secondaryPalmHit));
-            transformSession.startScale = {
-              x: clamp(transformSession.mesh.scale.x || 1, MIN_MESH_SCALE, MAX_MESH_SCALE),
-              y: clamp(transformSession.mesh.scale.y || 1, MIN_MESH_SCALE, MAX_MESH_SCALE),
-              z: clamp(transformSession.mesh.scale.z || 1, MIN_MESH_SCALE, MAX_MESH_SCALE),
-            };
+        if (transformSession?.mesh && primary && secondary && primaryPalmHit && secondaryPalmHit) {
+          if (handReturnThisFrame) {
+            refreshTransformSessionAnchors(transformSession, primaryPalmHit, secondaryPalmHit, primary, secondary);
           }
-          const currentSpan = Math.max(MIN_TRANSFORM_SPAN, planarDistance(primaryPalmHit, secondaryPalmHit));
-          const spanRatio = currentSpan / Math.max(MIN_TRANSFORM_SPAN, transformSession.startSpan || MIN_TRANSFORM_SPAN);
-          const targetScaleX = clamp(transformSession.startScale.x * spanRatio, MIN_MESH_SCALE, MAX_MESH_SCALE);
-          const targetScaleY = clamp(transformSession.startScale.y * spanRatio, MIN_MESH_SCALE, MAX_MESH_SCALE);
-          const targetScaleZ = clamp(transformSession.startScale.z * spanRatio, MIN_MESH_SCALE, MAX_MESH_SCALE);
 
-          transformSession.mesh.scale.x = THREE.MathUtils.lerp(
-            transformSession.mesh.scale.x,
-            targetScaleX,
+          const currentSpan = Math.max(MIN_TRANSFORM_SPAN, planarDistance(primaryPalmHit, secondaryPalmHit));
+          const spanRatio = clamp(
+            currentSpan / Math.max(MIN_TRANSFORM_SPAN, transformSession.startSpan || MIN_TRANSFORM_SPAN),
+            MIN_MESH_SCALE,
+            MAX_MESH_SCALE
+          );
+          const shape = transformSession.mesh.userData?.shape || shapeTypeEl.value;
+          const targetParams = scaleSceneParams(shape, transformSession.startParams, spanRatio);
+          const smoothedParams = interpolateSceneParams(
+            shape,
+            sceneParamsFromMesh(transformSession.mesh),
+            targetParams,
             TRANSFORM_SCALE_SMOOTHING
           );
-          transformSession.mesh.scale.y = THREE.MathUtils.lerp(
-            transformSession.mesh.scale.y,
-            targetScaleY,
-            TRANSFORM_SCALE_SMOOTHING
-          );
-          transformSession.mesh.scale.z = THREE.MathUtils.lerp(
-            transformSession.mesh.scale.z,
-            targetScaleZ,
-            TRANSFORM_SCALE_SMOOTHING
-          );
-          alignMeshToGround(transformSession.mesh);
+          applySceneObjectToMesh(world, transformSession.mesh, buildSceneObjectForMesh(transformSession.mesh, { params: smoothedParams }));
+          if (transformSession.mesh.userData?.shape !== "line" && transformSession.mesh.userData?.floorLocked !== false) {
+            alignMeshToGround(transformSession.mesh);
+          }
+
+          const leftWristAngle = computeWristAngle(primary);
+          const rightWristAngle = computeWristAngle(secondary);
+          if (leftWristAngle != null && transformSession.startLeftWristAngle != null) {
+            const deltaY = shortestAngleDelta(transformSession.startLeftWristAngle, leftWristAngle);
+            const targetRotationY = snapRotation(transformSession.startRotationY + (deltaY * 2));
+            transformSession.mesh.rotation.y = THREE.MathUtils.lerp(
+              transformSession.mesh.rotation.y,
+              targetRotationY,
+              TRANSFORM_ROTATION_SMOOTHING
+            );
+          }
+          if (rightWristAngle != null && transformSession.startRightWristAngle != null) {
+            const deltaX = shortestAngleDelta(transformSession.startRightWristAngle, rightWristAngle);
+            const targetRotationX = snapRotation(transformSession.startRotationX + (deltaX * 2));
+            transformSession.mesh.rotation.x = THREE.MathUtils.lerp(
+              transformSession.mesh.rotation.x,
+              targetRotationX,
+              TRANSFORM_ROTATION_SMOOTHING
+            );
+          }
+
           updateMeshMetadata(transformSession.mesh);
           updateGeometryMetrics(
             transformSession.mesh.userData.shape || shapeTypeEl.value,
-            Number(transformSession.mesh.userData.baseSize || sizeInputEl.value) *
-              ((transformSession.mesh.scale.x + transformSession.mesh.scale.y + transformSession.mesh.scale.z) / 3),
+            transformSession.mesh.userData.baseSize || sizeInputEl.value,
             transformSession.mesh
           );
 
           syncSelectionMarker(transformSession.mesh);
         }
 
-        prevPointPose = pointActive;
+        prevPointPose = false;
       } else if (transformSession || rotationSession) {
         fistHoldStartAt = null;
         prevPlacementPulseActive = false;
@@ -2728,7 +3066,7 @@ export function bootstrapApp() {
       } else if (autoMode === "spawn") {
         if (placementPreview?.shape === "line" && thumbsDownPose) {
           setIntent("thumbs down to cancel the line", "idle");
-        } else if (placementPreview?.shape === "line") {
+        } else if (placementPreview?.shape === "line" && !lineUsesSuggestedPlacement()) {
           setIntent("move to the second point and pinch again to place the line", "idle");
         } else if (placementPreview && thumbsUpPose) {
           setIntent("thumbs up to place", "ok");
@@ -2743,22 +3081,18 @@ export function bootstrapApp() {
         } else if (primary && isFistPose(primary) && !deleteTarget) {
           setIntent("move closer to an object to delete", "idle");
         } else if (interaction.pinch) {
-          setIntent(shapeTypeEl.value === "line" ? "pinch to pick a line point" : "pinch to position preview", "ok");
+          setIntent(shapeTypeEl.value === "line" && !lineUsesSuggestedPlacement() ? "pinch to pick a line point" : "pinch to position preview", "ok");
         } else if (shapeTypeEl.value === "line") {
-          setIntent("pinch one point to start a line", "idle");
+          setIntent(lineUsesSuggestedPlacement() ? "pinch to preview the guided line" : "pinch one point to start a line", "idle");
         } else {
           setIntent("ready to place", "idle");
         }
-      } else if (pointActive && rotationSession?.mesh) {
-        setIntent("rotating selected object", "ok");
-      } else if (pointActive) {
-        setIntent("show both point gestures to rotate", "idle");
       } else if (transformSession && handCount >= 2) {
-        setIntent("resizing selected object", "ok");
+        setIntent("spread to resize, left wrist rotates Y, right wrist rotates X", "ok");
       } else if (transformSession) {
         setIntent("transform locked", "ok");
       } else if (handCount >= 2) {
-        setIntent("use two hands to resize or both point to rotate", "idle");
+        setIntent("frame an object with both hands to transform it", "idle");
       } else {
         setIntent("ready to place", "idle");
       }
@@ -2927,15 +3261,18 @@ export function bootstrapApp() {
     row.querySelector('.transform-field[data-transform="rotation"][data-axis="x"]')?.setAttribute("value", normalizeRotationDegrees(meshRotationAxisDegrees(mesh, "x")).toFixed(0));
     row.querySelector('.transform-field[data-transform="rotation"][data-axis="y"]')?.setAttribute("value", normalizeRotationDegrees(meshRotationAxisDegrees(mesh, "y")).toFixed(0));
     row.querySelector('.transform-field[data-transform="rotation"][data-axis="z"]')?.setAttribute("value", normalizeRotationDegrees(meshRotationAxisDegrees(mesh, "z")).toFixed(0));
-    row.querySelector('.transform-field[data-transform="scale"][data-axis="x"]')?.setAttribute("value", meshScaleAxisValue(mesh, "x").toFixed(2));
-    row.querySelector('.transform-field[data-transform="scale"][data-axis="y"]')?.setAttribute("value", meshScaleAxisValue(mesh, "y").toFixed(2));
-    row.querySelector('.transform-field[data-transform="scale"][data-axis="z"]')?.setAttribute("value", meshScaleAxisValue(mesh, "z").toFixed(2));
     row.querySelectorAll(".transform-field").forEach((input) => {
       const transform = input.dataset.transform;
       const axis = input.dataset.axis;
       if (transform === "position") input.value = meshPositionAxisValue(mesh, axis).toFixed(2);
       if (transform === "rotation") input.value = normalizeRotationDegrees(meshRotationAxisDegrees(mesh, axis)).toFixed(0);
-      if (transform === "scale") input.value = meshScaleAxisValue(mesh, axis).toFixed(2);
+    });
+    const dimensions = dimensionFieldsForMesh(mesh);
+    row.querySelectorAll(".dimension-field").forEach((input) => {
+      const field = dimensions.find((candidate) => candidate.key === input.dataset.param);
+      if (field) {
+        input.value = Number(field.value || 0).toFixed(2);
+      }
     });
   }
 
@@ -2944,6 +3281,12 @@ export function bootstrapApp() {
     if (!(target instanceof HTMLInputElement)) return;
     const objectSerial = target.dataset.objectSerial;
     if (!objectSerial) return;
+
+    if (target.classList.contains("dimension-field")) {
+      if (updateMeshParamValue(objectSerial, target.dataset.param || "", target.value) == null) return;
+      syncObjectTransformInputs(target, objectSerial);
+      return;
+    }
 
     if (!target.classList.contains("transform-field")) return;
     const transform = target.dataset.transform;
@@ -2961,10 +3304,6 @@ export function bootstrapApp() {
       return;
     }
 
-    if (transform === "scale") {
-      if (updateMeshScaleAxisValue(objectSerial, axis, target.value) == null) return;
-      syncObjectTransformInputs(target, objectSerial);
-    }
   });
 
   objectListEl?.addEventListener("change", (event) => {
@@ -3053,20 +3392,11 @@ export function bootstrapApp() {
     event.preventDefault();
 
     const scaleFactor = event.deltaY > 0 ? 0.95 : 1.05; // Zoom out shrinks, zoom in grows
-    if (activeMesh.userData?.shape === "cube") {
-      const size = (activeMesh.userData.baseSize || 1) * scaleFactor;
-      activeMesh.scale.setScalar(scaleFactor);
-      activeMesh.userData.baseSize = size;
-    } else if (["sphere", "cylinder", "cone", "pyramid"].includes(activeMesh.userData?.shape)) {
-      activeMesh.scale.setScalar(scaleFactor);
-      activeMesh.userData.baseSize = (activeMesh.userData.baseSize || 1) * scaleFactor;
-    } else if (activeMesh.userData?.shape === "cuboid") {
-      activeMesh.scale.setScalar(scaleFactor);
-      activeMesh.userData.baseSize = (activeMesh.userData.baseSize || 1) * scaleFactor;
-    }
+    scaleMeshSceneObject(activeMesh, scaleFactor, "wheel-scale");
 
     syncSelectionMarker(activeMesh);
     updateMeshMetadata(activeMesh);
+    updateGeometryMetrics(activeMesh.userData.shape || shapeTypeEl.value, activeMesh.userData.baseSize || 1, activeMesh);
     setStatus(`Scaled to ${(activeMesh.userData.baseSize || 1).toFixed(2)}`, "ok");
   });
   stageCanvas?.addEventListener("contextmenu", (event) => {
@@ -3079,6 +3409,20 @@ export function bootstrapApp() {
     secondaryClickIntent = null;
     if (!stationaryClick) {
       closeMousePlaceMenu();
+      return;
+    }
+    const hit = world.pickObject(event.clientX, event.clientY, placedMeshes);
+    if (hit?.object) {
+      closeMousePlaceMenu();
+      setActiveMesh(hit.object);
+      sceneEventTarget.dispatchEvent(new CustomEvent("object-contextmenu", {
+        detail: {
+          objectId: hit.object.userData?.sceneObjectId || null,
+          mesh: hit.object,
+          clientX: event.clientX,
+          clientY: event.clientY,
+        },
+      }));
       return;
     }
     openMousePlaceMenu(event.clientX, event.clientY);
@@ -3225,8 +3569,22 @@ export function bootstrapApp() {
       setActiveMesh(mesh || null);
       return mesh;
     },
+    getObject: (target) => sceneRuntime.getObject(target),
+    getMesh: (target) => sceneRuntime.getMesh(target),
+    getSelection: () => sceneRuntime.getSelection(),
     resetView: onResetView,
     onSceneChange: (handler) => sceneRuntime.on("change", () => handler(sceneRuntime.snapshot())),
+    onSceneEvent: (handler) => sceneRuntime.on("change", handler),
+    onSelectionChange: (handler) => {
+      const listener = (event) => handler(event.detail);
+      sceneEventTarget.addEventListener("selection", listener);
+      return () => sceneEventTarget.removeEventListener("selection", listener);
+    },
+    onObjectContextMenu: (handler) => {
+      const listener = (event) => handler(event.detail);
+      sceneEventTarget.addEventListener("object-contextmenu", listener);
+      return () => sceneEventTarget.removeEventListener("object-contextmenu", listener);
+    },
   };
 
   return { world, sceneRuntime, sceneApi };

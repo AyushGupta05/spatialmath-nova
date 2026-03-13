@@ -178,6 +178,58 @@ export function paramsToBaseSize(shape, params = defaultParamsForShape(shape)) {
   }
 }
 
+export function scaleSceneParams(shape, params = defaultParamsForShape(shape), scale = 1) {
+  const nextScale = normalizeNumber(scale, 1);
+  const normalized = normalizeParams(shape, params);
+
+  switch (shape) {
+    case "cube":
+      return { size: normalized.size * nextScale };
+    case "cuboid":
+      return {
+        width: normalized.width * nextScale,
+        height: normalized.height * nextScale,
+        depth: normalized.depth * nextScale,
+      };
+    case "sphere":
+      return { radius: normalized.radius * nextScale };
+    case "cylinder":
+    case "cone":
+      return {
+        radius: normalized.radius * nextScale,
+        height: normalized.height * nextScale,
+      };
+    case "pyramid":
+      return {
+        base: normalized.base * nextScale,
+        height: normalized.height * nextScale,
+      };
+    case "plane":
+      return {
+        width: normalized.width * nextScale,
+        depth: normalized.depth * nextScale,
+      };
+    case "line": {
+      const start = normalizeVec3(normalized.start, DEFAULT_POSITION);
+      const end = normalizeVec3(normalized.end, [1, 0, 0]);
+      const midpoint = [
+        (start[0] + end[0]) * 0.5,
+        (start[1] + end[1]) * 0.5,
+        (start[2] + end[2]) * 0.5,
+      ];
+      return {
+        start: midpoint.map((value, index) => value + (start[index] - value) * nextScale),
+        end: midpoint.map((value, index) => value + (end[index] - value) * nextScale),
+        thickness: normalized.thickness * nextScale,
+      };
+    }
+    case "pointMarker":
+      return { radius: normalized.radius * nextScale };
+    default:
+      return normalized;
+  }
+}
+
 export function baseSizeToParams(shape, baseSize = 1) {
   const size = normalizeNumber(baseSize, 1);
   switch (shape) {

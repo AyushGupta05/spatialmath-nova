@@ -70,7 +70,15 @@ Return ONLY valid JSON with this exact top-level structure:
       "expectedAnswer": null,
       "tolerance": 0.05
     }
-  ]
+  ],
+  "liveChallenge": {
+    "id": "string",
+    "title": "string",
+    "metric": "volume" | "surfaceArea",
+    "multiplier": 2,
+    "prompt": "string",
+    "tolerance": 0.04
+  }
 }
 
 Rules:
@@ -345,6 +353,18 @@ function heuristicPlan(question, mode = "guided") {
   ];
 
   const tolerance = questionType === "surface_area" ? 0.05 : 0.05;
+  const liveChallenge = ["volume", "surface_area"].includes(questionType)
+    ? {
+      id: `${shape}-live-goal`,
+      title: questionType === "surface_area" ? "Double the Surface Area" : "Double the Volume",
+      metric: questionType === "surface_area" ? "surfaceArea" : "volume",
+      multiplier: 2,
+      prompt: questionType === "surface_area"
+        ? `Adjust the ${primaryShape} until its surface area doubles.`
+        : `Adjust the ${primaryShape} until its volume doubles.`,
+      tolerance: 0.04,
+    }
+    : null;
 
   return normalizeScenePlan({
     problem: {
@@ -386,6 +406,7 @@ function heuristicPlan(question, mode = "guided") {
       expectedAnswer: null,
       tolerance,
     }],
+    liveChallenge,
   });
 }
 
@@ -446,6 +467,7 @@ export async function generateScenePlan({ question, mode = "guided", sceneSnapsh
       challengePrompts: (novaPlan.challengePrompts?.length || 0)
         ? novaPlan.challengePrompts
         : baselinePlan.challengePrompts,
+      liveChallenge: novaPlan.liveChallenge || baselinePlan.liveChallenge || null,
     });
   } catch (error) {
     console.warn("Falling back to heuristic scene plan:", error?.message || error);

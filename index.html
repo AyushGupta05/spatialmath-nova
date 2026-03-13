@@ -198,31 +198,48 @@
               </div>
             </section>
 
+            <section id="buildStatusSection" class="scene-validation-section hidden">
+              <div class="card-heading">
+                <h2>Build Status</h2>
+                <span id="buildCompletionChip" class="pill subtle">0 / 0</span>
+              </div>
+              <div id="buildProgress" class="scene-validation">
+                <p class="muted-text">Parse a question to begin the guided build.</p>
+              </div>
+              <p id="stepStatusNote" class="muted-text">Nova will track your progress as you build.</p>
+            </section>
+
+            <section id="liveChallengeSection" class="live-challenge-section hidden">
+              <div class="card-heading">
+                <h2>Live Challenge</h2>
+                <span id="liveChallengeChip" class="pill subtle">Locked</span>
+              </div>
+              <div id="liveChallengeCard" class="live-challenge-card">
+                <p class="muted-text">Complete the required build to unlock the live goal.</p>
+              </div>
+            </section>
+
             <section id="buildStepsSection" class="build-steps-section hidden">
               <div class="card-heading">
                 <h2>Guided Build</h2>
                 <span id="buildGoalChip" class="pill subtle">Waiting</span>
               </div>
               <div id="buildStepsList" class="build-steps-list"></div>
-              <div class="card-heading compact-heading">
-                <h2>Challenge Prompts</h2>
-              </div>
-              <div id="challengePromptList" class="challenge-prompt-list"></div>
-              <div class="card-heading compact-heading">
-                <h2>Voice Transcript</h2>
-              </div>
-              <div id="voiceTranscript" class="voice-transcript muted-text">Voice is off.</div>
             </section>
 
-            <!-- Challenges -->
             <section class="challenge-section" id="challengeSection">
-              <div class="card-heading">
-                <h2>Challenges</h2>
-                <span id="scoreDisplay" class="pill">Score: 0</span>
-              </div>
-              <div id="challengeList" class="challenge-list">
-                <p class="muted-text">Loading challenges...</p>
-              </div>
+              <details class="challenge-library" id="challengeLibrary">
+                <summary class="challenge-library-toggle">
+                  <span>Practice Library</span>
+                  <span id="scoreDisplay" class="pill">Score: 0</span>
+                </summary>
+                <div class="challenge-library-body">
+                  <p class="muted-text">Use the library for extra judge-friendly demos after the question-first flow.</p>
+                  <div id="challengeList" class="challenge-list">
+                    <p class="muted-text">Loading challenges...</p>
+                  </div>
+                </div>
+              </details>
             </section>
 
             <!-- Chat Messages -->
@@ -242,7 +259,7 @@
                 </button>
                 <button id="explainBtn" class="tutor-action-btn" type="button">Explain Step</button>
                 <button id="voiceToggle" class="tutor-action-btn voice-btn" type="button" title="Toggle voice">
-                  <span>🔊 Voice</span>
+                  <span>Voice</span>
                 </button>
               </div>
 
@@ -368,6 +385,22 @@
             <div id="mousePlaceMenu" class="mouse-place-menu hidden" role="menu" aria-hidden="true">
               <button id="mousePlaceAction" class="mouse-place-action" type="button" role="menuitem">Place Object</button>
             </div>
+            <aside id="unfoldDrawer" class="unfold-drawer hidden" aria-hidden="true">
+              <div class="unfold-drawer-head">
+                <div>
+                  <p class="eyebrow">Unfold View</p>
+                  <h2 id="unfoldTitle">Surface Breakdown</h2>
+                </div>
+                <button id="unfoldCloseBtn" class="unfold-close-btn" type="button" aria-label="Close unfold panel">&times;</button>
+              </div>
+              <div class="unfold-drawer-body">
+                <p id="unfoldSubtitle" class="muted-text">Right click a solid to inspect its 2D net.</p>
+                <div id="unfoldStats" class="unfold-stats"></div>
+                <div id="unfoldFormula" class="unfold-formula"></div>
+                <div id="unfoldBreakdown" class="unfold-breakdown"></div>
+                <div id="unfoldNet" class="unfold-net"></div>
+              </div>
+            </aside>
           </div>
         </section>
 

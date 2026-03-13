@@ -3,6 +3,7 @@ import {
   defaultPositionForShape,
   distanceBetween,
   normalizeSceneObject,
+  paramsToBaseSize,
 } from "./schema.js";
 
 function buildMaterial(color, opacity = 0.9) {
@@ -109,10 +110,13 @@ export function applySceneObjectToMesh(world, mesh, objectSpec) {
     const position = spec.position || defaultPositionForShape(spec.shape, spec.params);
     mesh.position.set(position[0], position[1], position[2]);
     mesh.rotation.set(spec.rotation[0], spec.rotation[1], spec.rotation[2]);
+    mesh.scale.set(1, 1, 1);
 
     if (spec.shape === "plane") {
       mesh.rotation.x = -Math.PI / 2 + spec.rotation[0];
     }
+  } else {
+    mesh.scale.set(1, 1, 1);
   }
 
   mesh.userData.sceneObjectId = spec.id || mesh.userData.sceneObjectId || null;
@@ -120,7 +124,7 @@ export function applySceneObjectToMesh(world, mesh, objectSpec) {
   mesh.userData.shape = spec.shape;
   mesh.userData.sceneParams = structuredClone(spec.params);
   mesh.userData.sceneMetadata = { ...spec.metadata };
-  mesh.userData.baseSize = mesh.userData.baseSize || 1;
+  mesh.userData.baseSize = paramsToBaseSize(spec.shape, spec.params);
   mesh.userData.floorLocked = spec.shape !== "line" && spec.shape !== "plane";
   if (spec.shape === "line") {
     mesh.userData.lineStart = [...spec.params.start];
@@ -173,8 +177,20 @@ function paramsFromBounds(shape, mesh) {
   }
 }
 
-export function sceneObjectFromMesh(mesh) {
+export function sceneParamsFromMesh(mesh) {
   const shape = mesh?.userData?.shape || "cube";
+  const storedParams = mesh?.userData?.sceneParams;
+  if (storedParams && typeof storedParams === "object") {
+    if (shape === "line") {
+      return {
+        ...structuredClone(storedParams),
+        start: Array.isArray(mesh.userData?.lineStart) ? [...mesh.userData.lineStart] : [...storedParams.start],
+        end: Array.isArray(mesh.userData?.lineEnd) ? [...mesh.userData.lineEnd] : [...storedParams.end],
+      };
+    }
+    return structuredClone(storedParams);
+  }
+
   const bounds = new THREE.Box3().setFromObject(mesh);
   const inferredThickness = Math.max(
     0.05,
@@ -183,13 +199,21 @@ export function sceneObjectFromMesh(mesh) {
       Math.max(0.001, bounds.max.z - bounds.min.z)
     )
   );
-  const params = shape === "line"
-    ? {
+
+  if (shape === "line") {
+    return {
       start: Array.isArray(mesh.userData?.lineStart) ? [...mesh.userData.lineStart] : [0, 0.03, 0],
       end: Array.isArray(mesh.userData?.lineEnd) ? [...mesh.userData.lineEnd] : [1, 0.03, 0],
-      thickness: mesh?.userData?.sceneParams?.thickness || inferredThickness,
-    }
-    : paramsFromBounds(shape, mesh);
+      thickness: inferredThickness,
+    };
+  }
+
+  return paramsFromBounds(shape, mesh);
+}
+
+export function sceneObjectFromMesh(mesh) {
+  const shape = mesh?.userData?.shape || "cube";
+  const params = sceneParamsFromMesh(mesh);
 
   return normalizeSceneObject({
     id: mesh?.userData?.sceneObjectId || null,
