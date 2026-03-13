@@ -1467,6 +1467,35 @@ export function bootstrapApp() {
     return Math.hypot(a.x - b.x, a.z - b.z);
   }
 
+  function segmentMetrics2D(px, py, ax, ay, bx, by) {
+    const abx = bx - ax;
+    const aby = by - ay;
+    const lengthSq = (abx * abx) + (aby * aby);
+    if (lengthSq <= 1e-6) {
+      return {
+        distance: Math.hypot(px - ax, py - ay),
+        projection: 0.5,
+        span: 0,
+      };
+    }
+
+    const projection = clamp((((px - ax) * abx) + ((py - ay) * aby)) / lengthSq, 0, 1);
+    const closestX = ax + (abx * projection);
+    const closestY = ay + (aby * projection);
+    return {
+      distance: Math.hypot(px - closestX, py - closestY),
+      projection,
+      span: Math.hypot(abx, aby),
+    };
+  }
+
+  function planarSegmentMetrics(point, start, end) {
+    if (!point || !start || !end) {
+      return { distance: Infinity, projection: 0.5, span: 0 };
+    }
+    return segmentMetrics2D(point.x, point.z, start.x, start.z, end.x, end.z);
+  }
+
   function updateMeshMetadata(mesh) {
     if (!mesh) return;
     const bbox = new THREE.Box3().setFromObject(mesh);
@@ -1586,9 +1615,7 @@ export function bootstrapApp() {
     const ay = handA.y ?? 0.5;
     const bx = handB.x ?? 0.5;
     const by = handB.y ?? 0.5;
-    const distA = Math.hypot(ax - screenPoint.x, ay - screenPoint.y);
-    const distB = Math.hypot(bx - screenPoint.x, by - screenPoint.y);
-    const midpointDist = Math.hypot(((ax + bx) * 0.5) - screenPoint.x, ((ay + by) * 0.5) - screenPoint.y);
+    const segment = segmentMetrics2D(screenPoint.x, screenPoint.y, ax, ay, bx, by);
     const vecAX = ax - screenPoint.x;
     const vecAY = ay - screenPoint.y;
     const vecBX = bx - screenPoint.x;
@@ -1598,13 +1625,14 @@ export function bootstrapApp() {
     const oppositionDot = (lenA > 1e-4 && lenB > 1e-4)
       ? (((vecAX * vecBX) + (vecAY * vecBY)) / (lenA * lenB))
       : 1;
-    const handSpan = Math.hypot(ax - bx, ay - by);
+    const handSpan = segment.span;
+    const wrapsObject = segment.projection >= 0.12 && segment.projection <= 0.88;
+    const laneWidth = Math.max(0.04, Math.min(0.16, handSpan * 0.28));
 
     return (
-      distA <= 0.24 &&
-      distB <= 0.24 &&
-      midpointDist <= 0.18 &&
       handSpan >= 0.11 &&
+      wrapsObject &&
+      segment.distance <= laneWidth &&
       oppositionDot <= 0.45
     );
   }
@@ -1629,8 +1657,13 @@ export function bootstrapApp() {
       const dA = planarDistance(mesh.position, hitA);
       const dB = planarDistance(mesh.position, hitB);
       const midpointDist = planarDistance(mesh.position, midpoint);
-      if (dA > radius * 1.3 || dB > radius * 1.3) continue;
-      if (midpointDist > radius * TRANSFORM_MIDPOINT_RADIUS_FACTOR) continue;
+      const segment = planarSegmentMetrics(mesh.position, hitA, hitB);
+      const handSpan = Math.max(segment.span, planarDistance(hitA, hitB));
+      const wrapsObject = segment.projection >= 0.08 && segment.projection <= 0.92;
+      const laneWidth = Math.max(radius * 1.15, handSpan * 0.18);
+      if (!wrapsObject) continue;
+      if (segment.distance > laneWidth) continue;
+      if (midpointDist > radius * Math.max(TRANSFORM_MIDPOINT_RADIUS_FACTOR, 1.65)) continue;
 
       const vecAX = hitA.x - mesh.position.x;
       const vecAZ = hitA.z - mesh.position.z;
@@ -1643,7 +1676,14 @@ export function bootstrapApp() {
       const oppositionDot = ((vecAX * vecBX) + (vecAZ * vecBZ)) / (lenA * lenB);
       if (oppositionDot > TRANSFORM_OPPOSITION_DOT_MAX) continue;
 
-      const score = dA + dB + midpointDist * 0.9 + (oppositionDot + 1) * 0.35 - (mesh === activeMesh ? 0.18 : 0);
+      const score = (
+        segment.distance * 2.2 +
+        midpointDist * 0.55 +
+        (Math.abs(segment.projection - 0.5) * 0.25) +
+        (oppositionDot + 1) * 0.3 +
+        Math.min(dA, dB) * 0.08 -
+        (mesh === activeMesh ? 0.22 : 0)
+      );
       if (score < bestScore) {
         best = mesh;
         bestScore = score;
@@ -2487,46 +2527,7 @@ export function bootstrapApp() {
   }
 
   function drawTransformLockBadge() {
-    const lockedMesh = rotationSession?.mesh || transformSession?.mesh;
-    if (!lockedMesh || activeMesh !== lockedMesh) return;
-
-    const worldPos = lockedMesh.position.clone();
-    worldPos.y += 0.65;
-    const ndc = worldPos.project(world.camera);
-
-    if (ndc.z < -1 || ndc.z > 1) return;
-    const x = ((ndc.x + 1) * 0.5) * overlayEl.width;
-    const y = ((1 - ndc.y) * 0.5) * overlayEl.height;
-
-    ctx.save();
-    ctx.font = "600 11px 'IBM Plex Sans', 'Segoe UI', sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-
-    const text = transformSession ? "LOCKED  R:X  L:Y" : "LOCKED";
-    const padX = 8;
-    const padY = 4;
-    const w = ctx.measureText(text).width + padX * 2;
-    const h = 18;
-    const rx = x - w * 0.5;
-    const ry = y - h - 10;
-
-    ctx.fillStyle = "rgba(9, 24, 42, 0.78)";
-    ctx.strokeStyle = "rgba(120, 220, 255, 0.55)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    if (typeof ctx.roundRect === "function") {
-      ctx.roundRect(rx, ry, w, h, 7);
-    } else {
-      // fallback for browsers without Canvas roundRect support
-      ctx.rect(rx, ry, w, h);
-    }
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = "rgba(170, 235, 255, 0.95)";
-    ctx.fillText(text, x, ry + h * 0.53);
-    ctx.restore();
+    return;
   }
 
   function refreshDebug() {
