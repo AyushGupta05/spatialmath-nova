@@ -406,6 +406,7 @@ export function heuristicSourceSummary({ questionText = "", imageAsset = null })
     labels: [...new Set(labels)],
     relationships: [...new Set(relationships)],
     diagramSummary: imageAsset ? "Uploaded worksheet or diagram provided by the learner." : "",
+    conflicts: [],
   };
 }
 

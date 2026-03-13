@@ -46,6 +46,40 @@ function normalizeSourceSummary(summary = {}, fallbackQuestion = "") {
     labels: uniqueStrings(summary.labels),
     relationships: uniqueStrings(summary.relationships),
     diagramSummary: normalizeString(summary.diagramSummary, ""),
+    conflicts: uniqueStrings(summary.conflicts),
+  };
+}
+
+function normalizeSourceEvidence(sourceEvidence = {}, sourceSummary = {}) {
+  return {
+    inputMode: normalizeInputMode(sourceEvidence.inputMode, sourceSummary.inputMode || "text"),
+    givens: uniqueStrings(sourceEvidence.givens?.length ? sourceEvidence.givens : sourceSummary.givens),
+    diagramSummary: normalizeString(sourceEvidence.diagramSummary, sourceSummary.diagramSummary || ""),
+    conflicts: uniqueStrings(sourceEvidence.conflicts?.length ? sourceEvidence.conflicts : sourceSummary.conflicts),
+  };
+}
+
+function normalizeAgentTraceItem(item = {}, index = 0) {
+  return {
+    id: normalizeString(item.id, `agent-${index + 1}`),
+    label: normalizeString(item.label, `Agent ${index + 1}`),
+    status: normalizeString(item.status, "ready"),
+    summary: normalizeString(item.summary, ""),
+  };
+}
+
+function normalizeAgentTrace(items = []) {
+  return normalizeArray(items).map((item, index) => normalizeAgentTraceItem(item, index));
+}
+
+function normalizeDemoPreset(preset = {}, sceneFocus = {}, sourceSummary = {}) {
+  return {
+    title: normalizeString(preset.title, sourceSummary.cleanedQuestion || sceneFocus.concept || "Nova Prism demo"),
+    scriptBeat: normalizeString(
+      preset.scriptBeat,
+      sceneFocus.judgeSummary || sceneFocus.primaryInsight || "Turn the worksheet into a live 3D lesson and coach the learner through it."
+    ),
+    recommendedCategory: normalizeString(preset.recommendedCategory, "Best of Multimodal Understanding"),
   };
 }
 
@@ -273,6 +307,7 @@ export function normalizeScenePlan(plan = {}) {
   const answerScaffold = normalizeAnswerScaffold(plan.answerScaffold || plan.answer || {});
   const sourceSummary = normalizeSourceSummary(plan.sourceSummary, question);
   const sceneFocus = normalizeSceneFocus(plan.sceneFocus, sourceSummary.cleanedQuestion || question);
+  const sourceEvidence = normalizeSourceEvidence(plan.sourceEvidence, sourceSummary);
   const fallbackMoments = defaultLearningMoments({
     question: sourceSummary.cleanedQuestion || question,
     answerScaffold,
@@ -303,6 +338,9 @@ export function normalizeScenePlan(plan = {}) {
     answerScaffold,
     challengePrompts,
     liveChallenge,
+    sourceEvidence,
+    agentTrace: normalizeAgentTrace(plan.agentTrace),
+    demoPreset: normalizeDemoPreset(plan.demoPreset, sceneFocus, sourceSummary),
   };
 }
 

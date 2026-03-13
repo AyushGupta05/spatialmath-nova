@@ -9,3 +9,4 @@ node_modules/
 .env.local
 .playwright-cli/
 output/
+docs/submission/

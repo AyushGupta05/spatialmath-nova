@@ -3,13 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SpatialMath Nova - AI Spatial Reasoning Tutor</title>
+    <title>Nova Prism - Live 3D Lesson Studio</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Exo+2:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;700&display=swap"
       rel="stylesheet"
     />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="stylesheet" href="./styles.css" />
     <script type="importmap">
       {
@@ -26,8 +27,8 @@
       <!-- ============ TOP BAR ============ -->
       <header class="topbar">
         <div class="brand-lockup">
-          <p class="eyebrow">SpatialMath Nova</p>
-          <h1>AI Spatial Reasoning Tutor</h1>
+          <p class="eyebrow">Nova Prism</p>
+          <h1>Live 3D Lesson Studio</h1>
         </div>
 
         <div class="topbar-tools">
@@ -57,8 +58,8 @@
           </div>
 
           <details class="advanced-menu">
-            <summary class="tool-btn is-menu" data-tooltip="Advanced">
-              <span class="tool-label">Advanced</span>
+            <summary class="tool-btn is-menu" data-tooltip="Studio Mode">
+              <span class="tool-label">Studio Mode</span>
             </summary>
             <div class="advanced-panel">
               <label class="field">
@@ -161,14 +162,27 @@
             <!-- Question Input -->
             <section class="question-section">
               <div class="card-heading">
-                <h2>Create a Lesson</h2>
-                <span class="pill subtle">Nova</span>
+                <div>
+                  <h2>Nova Prism</h2>
+                  <p class="section-subtitle">Turn a worksheet photo into a live 3D lesson you can talk to.</p>
+                </div>
+                <span class="pill subtle">Judge Demo Ready</span>
+              </div>
+              <div id="capabilityBadges" class="capability-badges">
+                <span class="capability-badge is-muted">Checking Nova capabilities...</span>
+              </div>
+              <div class="hero-cta-row">
+                <button id="judgeDemoBtn" class="plan-btn btn-primary hero-cta-btn" type="button">Try Judge Demo</button>
+                <button id="buildFromDiagramBtn" class="plan-btn btn-secondary hero-cta-btn" type="button">Build From Diagram</button>
+              </div>
+              <div id="judgeDemoNote" class="judge-demo-note">
+                <strong>Suggested story:</strong> diagram -> 3D lesson -> spoken coaching -> live build check.
               </div>
               <div class="question-input-wrap">
                 <textarea
                   id="questionInput"
                   class="question-textarea"
-                  placeholder="Type or paste a spatial maths question...&#10;e.g. &quot;What happens to the volume of a cylinder with radius 3 and height 7 if the radius doubles?&quot;"
+                  placeholder="Paste a spatial maths prompt or upload a worksheet diagram...&#10;e.g. &quot;What happens to the volume of a cylinder with radius 3 and height 7 if the radius doubles?&quot;"
                   rows="3"
                 ></textarea>
                 <div class="question-upload-row">
@@ -182,10 +196,26 @@
                 </div>
                 <button id="questionSubmit" class="question-submit-btn" type="button">
                   <span class="submit-icon">&#10148;</span>
-                  <span>Build Lesson</span>
+                  <span>Generate 3D Lesson</span>
                 </button>
               </div>
               <div id="questionStatus" class="question-status hidden"></div>
+            </section>
+
+            <section id="sourceEvidenceSection" class="scene-plan-section hidden">
+              <div class="card-heading">
+                <h2>Source Evidence</h2>
+                <span id="sourceEvidenceMode" class="pill subtle">Text</span>
+              </div>
+              <div id="sourceEvidence" class="source-evidence"></div>
+            </section>
+
+            <section id="agentTraceSection" class="scene-plan-section hidden">
+              <div class="card-heading">
+                <h2>Agent Trace</h2>
+                <span class="pill subtle">Nova Stack</span>
+              </div>
+              <div id="agentTrace" class="agent-trace"></div>
             </section>
 
             <!-- Scene Plan Panel (initially hidden) -->
@@ -276,6 +306,10 @@
 
                 <details id="followUpDetails" class="lesson-details">
                   <summary class="lesson-details-toggle">Ask a follow-up</summary>
+                  <div class="voice-input-row">
+                    <button id="voiceRecordBtn" class="tutor-action-btn voice-record-btn" type="button">Hold to Talk</button>
+                    <p id="voiceStatus" class="muted-text">Mic check pending...</p>
+                  </div>
                   <div class="chat-input-wrap lesson-follow-up">
                     <input
                       id="chatInput"

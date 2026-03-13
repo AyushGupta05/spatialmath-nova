@@ -208,8 +208,8 @@ export function buildStageConfig({
     config.message = learningMoment.insight || plan?.sceneFocus?.primaryInsight || "State the key idea in one short sentence.";
     config.goal = learningMoment.goal || "Summarize what the scene made clearer.";
     config.feedback = selectedObject
-      ? `${selectedObject.label} now anchors the explanation with visible dimensions.`
-      : guidance.coachFeedback || "The scene is ready to explain.";
+      ? `${selectedObject.label} now anchors the explanation with visible dimensions. This is the moment to connect the visual change to the math.`
+      : guidance.coachFeedback || "The scene is ready to explain. Name what became clearer once the flat prompt became a 3D build.";
     config.advanceLabel = "Start Challenge";
     return config;
   }
@@ -221,7 +221,7 @@ export function buildStageConfig({
     : learningMoment.goal || "Use one more scene action to reinforce the idea.";
   config.feedback = liveChallenge?.unlocked
     ? liveChallenge.complete
-      ? "Challenge complete. Your scene is within the target tolerance."
+      ? `Challenge complete. Your scene is within the target tolerance, which means the learner can now explain what changed and why.`
       : `Current ${formatMetricName(liveChallenge.metric)}: ${formatNumber(liveChallenge.currentValue)}`
     : guidance.coachFeedback || "Finish the build to unlock the challenge.";
   config.showChallenge = true;

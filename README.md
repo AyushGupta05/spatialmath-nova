@@ -1,21 +1,36 @@
-# SpatialMath Nova
+# Nova Prism
 
-SpatialMath Nova is an interactive 3D math and building sandbox. It combines hand tracking, a browser-based 3D scene, and a small Node server to help users create, manipulate, and evaluate spatial scenes.
+Nova Prism turns flat spatial-maths prompts into interactive 3D lessons that students can inspect, manipulate, and talk to.
 
-## What it does
+The app is built for the Amazon Nova hackathon story:
+- `multimodal understanding`: combine text prompts and uploaded worksheet diagrams
+- `voice coaching`: generate spoken tutoring responses with a Sonic-backed voice path and graceful fallback
+- `agentic lesson flow`: explicit source, planning, evaluation, and coaching stages
 
-- Tracks hand gestures in the browser for spatial interaction
-- Renders and edits 3D objects with a live scene view
-- Serves AI-assisted planning, tutoring, voice, challenge, and build APIs
-- Includes test coverage for the server planning/build flows
+## What the product does
 
-## Setup
+- Converts a maths prompt or worksheet diagram into a guided 3D lesson scene
+- Shows extracted givens, diagram evidence, and an agent trace before the build starts
+- Walks learners through `Orient -> Build -> Predict -> Check -> Reflect -> Challenge`
+- Evaluates the live scene as the learner builds and adjusts objects
+- Supports typed follow-ups plus push-to-talk voice coaching
+- Includes a one-click judge demo flow for hackathon recordings
+
+## Stack
+
+- Browser UI with `three.js`
+- Node.js + Hono server
+- Amazon Bedrock runtime client for Nova planning, tutoring, voice, and retrieval
+- Optional webcam-based hand tracking for spatial interaction
+
+## Local setup
 
 ### Requirements
 
 - Node.js 20+
 - npm
-- A webcam for hand tracking
+- Webcam for hand tracking
+- Microphone for push-to-talk voice mode
 
 ### Install
 
@@ -25,43 +40,48 @@ npm install
 
 ### Environment
 
-Create a `.env.local` file in the project root.
-
-The app can run without AI features, but AWS credentials are needed for Bedrock/Nova-powered routes:
+Create `.env.local` in the project root.
 
 ```env
 AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=your_key
 AWS_SECRET_ACCESS_KEY=your_secret
 AWS_SESSION_TOKEN=your_session_token
+
+# Optional overrides
+NOVA_TEXT_MODEL_ID=us.amazon.nova-2-lite-v1:0
+NOVA_SONIC_MODEL_ID=global.amazon.nova-2-sonic-v1:0
+NOVA_EMBED_MODEL_ID=amazon.nova-2-multimodal-embeddings-v1:0
 ```
 
-## Run
+The app still runs without Bedrock credentials, but multimodal planning, Sonic voice, and embedding-backed retrieval will fall back to the local non-AWS path.
 
-Start the app:
+## Run
 
 ```bash
 npm run dev
 ```
 
-Or run it without watch mode:
-
-```bash
-npm start
-```
-
 Then open [http://localhost:3000/index.html](http://localhost:3000/index.html).
 
-## Test
+## Quality checks
 
 ```bash
+npm run lint
 npm test
 ```
 
-## Optional Python tools
+## Judge flow
 
-This repo also includes Python utilities in `tools/` for gesture-model training, stress testing, and signal tuning. Install them with:
+1. Open the app and click `Try Judge Demo`
+2. Let Nova Prism build the lesson from the bundled worksheet-style diagram
+3. Show the extracted source evidence and agent trace
+4. Load the draft scene, then ask a spoken follow-up with `Hold to Talk`
+5. Move an object in the scene and show the live build check
 
-```bash
-pip install -r requirements.txt
-```
+## Submission assets
+
+Supporting hackathon collateral lives in `docs/submission/`:
+- `devpost.md`
+- `video-script.md`
+- `builder-blog.md`

@@ -2,6 +2,8 @@ import {
   BedrockRuntimeClient,
   ConverseCommand,
   ConverseStreamCommand,
+  InvokeModelCommand,
+  InvokeModelWithBidirectionalStreamCommand,
 } from "@aws-sdk/client-bedrock-runtime";
 
 const REGION = process.env.AWS_REGION || "us-east-1";
@@ -10,13 +12,16 @@ let client = null;
 
 function getClient() {
   if (!client) {
-    client = new BedrockRuntimeClient({
-      region: REGION,
-      credentials: {
+    const credentials = process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
+      ? {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
         sessionToken: process.env.AWS_SESSION_TOKEN || undefined,
-      },
+      }
+      : undefined;
+    client = new BedrockRuntimeClient({
+      region: REGION,
+      credentials,
     });
   }
   return client;
@@ -78,6 +83,69 @@ export async function* converseNovaStream(modelId, systemPrompt, messages, optio
       yield event.contentBlockDelta.delta.text;
     }
   }
+}
+
+export async function invokeModelJson(modelId, payload, options = {}) {
+  const response = await getClient().send(new InvokeModelCommand({
+    modelId,
+    contentType: "application/json",
+    accept: options.accept || "application/json",
+    body: Buffer.from(JSON.stringify(payload)),
+  }));
+
+  const raw = Buffer.from(response.body || []).toString("utf-8").trim();
+  if (!raw) {
+    throw new Error("Empty response from model invocation");
+  }
+  return JSON.parse(raw);
+}
+
+export async function invokeBidirectionalStream(modelId, events) {
+  async function* eventBody() {
+    for (const event of events) {
+      yield {
+        chunk: {
+          bytes: Buffer.from(JSON.stringify(event)),
+        },
+      };
+    }
+  }
+
+  const response = await getClient().send(new InvokeModelWithBidirectionalStreamCommand({
+    modelId,
+    body: eventBody(),
+  }));
+
+  const decodedEvents = [];
+  for await (const output of response.body || []) {
+    if (output.chunk?.bytes) {
+      const raw = Buffer.from(output.chunk.bytes).toString("utf-8").trim();
+      if (raw) {
+        decodedEvents.push(JSON.parse(raw));
+      }
+      continue;
+    }
+    if (output.internalServerException) {
+      throw new Error(output.internalServerException.message || "Bedrock internal server exception");
+    }
+    if (output.modelStreamErrorException) {
+      throw new Error(output.modelStreamErrorException.message || "Bedrock stream error");
+    }
+    if (output.validationException) {
+      throw new Error(output.validationException.message || "Bedrock validation error");
+    }
+    if (output.throttlingException) {
+      throw new Error(output.throttlingException.message || "Bedrock throttling error");
+    }
+    if (output.modelTimeoutException) {
+      throw new Error(output.modelTimeoutException.message || "Bedrock model timeout");
+    }
+    if (output.serviceUnavailableException) {
+      throw new Error(output.serviceUnavailableException.message || "Bedrock service unavailable");
+    }
+  }
+
+  return decodedEvents;
 }
 
 export const MODEL_IDS = {

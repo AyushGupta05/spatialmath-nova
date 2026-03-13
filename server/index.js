@@ -18,6 +18,7 @@ import tutorRoute from "./routes/tutor.js";
 import voiceRoute from "./routes/voice.js";
 import challengesRoute from "./routes/challenges.js";
 import buildRoute from "./routes/build.js";
+import capabilitiesRoute from "./routes/capabilities.js";
 
 const app = new Hono();
 
@@ -31,6 +32,7 @@ app.route("/api/tutor", tutorRoute);
 app.route("/api/voice", voiceRoute);
 app.route("/api/challenges", challengesRoute);
 app.route("/api/build", buildRoute);
+app.route("/api/capabilities", capabilitiesRoute);
 
 // Health check
 app.get("/api/health", (c) => c.json({ status: "ok", timestamp: Date.now() }));
@@ -65,11 +67,11 @@ async function findAvailablePort(startPort, attempts = 10) {
 const PORT = await findAvailablePort(DEFAULT_PORT);
 
 if (PORT !== DEFAULT_PORT) {
-  console.warn(`Port ${DEFAULT_PORT} is busy, starting SpatialMath Nova on ${PORT} instead.`);
+  console.warn(`Port ${DEFAULT_PORT} is busy, starting Nova Prism on ${PORT} instead.`);
 }
 
 serve({ fetch: app.fetch, port: PORT }, (info) => {
-  console.log(`SpatialMath Nova server running at http://localhost:${info.port}`);
+  console.log(`Nova Prism server running at http://localhost:${info.port}`);
   console.log(`  API: http://localhost:${info.port}/api/health`);
   console.log(`  App: http://localhost:${info.port}/index.html`);
   console.log(`  AWS Region: ${process.env.AWS_REGION || "us-east-1"}`);

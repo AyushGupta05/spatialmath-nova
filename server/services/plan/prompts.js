@@ -8,12 +8,14 @@ Return ONLY valid JSON with this exact structure:
   "givens": ["string"],
   "labels": ["string"],
   "relationships": ["string"],
-  "diagramSummary": "string"
+  "diagramSummary": "string",
+  "conflicts": ["string"]
 }
 
 Rules:
 - Combine text and image evidence when both are present.
 - If text and image disagree, prefer the explicit text and mention the conflict briefly in relationships.
+- Put direct text-image disagreements into conflicts.
 - Keep cleanedQuestion concise and student-facing.
 - Focus on geometric objects, measurements, labels, and relationships that would help build a 3D lesson.
 - Return JSON only.`;

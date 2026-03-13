@@ -3423,6 +3423,8 @@ export function bootstrapApp() {
   });
 
   undoBtn.addEventListener("click", undo);
+
+
   clearBtn.addEventListener("click", clearAll);
   saveSceneBtn.addEventListener("click", saveScene);
   loadSceneBtn.addEventListener("click", () => loadSceneInput.click());

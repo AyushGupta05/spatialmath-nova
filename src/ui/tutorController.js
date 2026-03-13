@@ -3,6 +3,7 @@ import {
   evaluateBuild,
   askTutor,
   requestVoiceResponse,
+  fetchCapabilities,
   fetchChallenges,
   checkChallenge,
 } from "../ai/client.js";
@@ -18,6 +19,7 @@ import {
   formatNumber,
 } from "./tutorLesson.js";
 import { initUnfoldDrawer, syncUnfoldDrawer } from "./unfoldDrawer.js";
+import { MicrophoneCapture } from "./microphoneCapture.js";
 
 let world = null;
 let sceneApi = null;
@@ -29,6 +31,10 @@ let liveChallengeState = null;
 let questionImageFile = null;
 let questionImagePreviewUrl = null;
 let lastSceneFeedback = "Nova will react to what you do in the scene.";
+let voiceConversationId = null;
+let voiceRecording = false;
+let activeMicCapture = null;
+let capabilitiesState = null;
 
 let questionInput;
 let questionSubmit;
@@ -38,6 +44,15 @@ let questionImageMeta;
 let questionImagePreview;
 let questionImageThumb;
 let questionImageClear;
+let capabilityBadges;
+let judgeDemoBtn;
+let buildFromDiagramBtn;
+let judgeDemoNote;
+let sourceEvidenceSection;
+let sourceEvidenceMode;
+let sourceEvidence;
+let agentTraceSection;
+let agentTrace;
 let scenePlanSection;
 let planSummary;
 let buildSummary;
@@ -82,6 +97,15 @@ let stepIndicator;
 let stepLabel;
 let stepPrev;
 let stepNext;
+let voiceRecordBtn;
+let voiceStatus;
+
+const HERO_DEMO = {
+  question: "A cylinder has radius 3 and height 7. A student asks what happens to the volume if the radius doubles. Build a 3D lesson from the diagram and coach the next step.",
+  imageUrl: "./assets/judge-demo-cylinder.png",
+  fileName: "judge-demo-cylinder.png",
+  note: "Suggested judge story: start from the worksheet, let Nova Prism rebuild it in 3D, then coach the learner in voice.",
+};
 
 function activePlan() {
   return tutorState.plan;
@@ -158,6 +182,60 @@ function showAnswerFeedback(text, correct = false) {
   answerFeedback.classList.remove("hidden");
 }
 
+function escapeHtml(value = "") {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function browserInputCapabilities() {
+  const supported = Boolean(navigator.mediaDevices?.getUserMedia);
+  return {
+    camera: supported,
+    mic: supported,
+  };
+}
+
+function renderCapabilities() {
+  if (!capabilityBadges) return;
+  const localInputs = browserInputCapabilities();
+  const serverCaps = capabilitiesState || {
+    models: {},
+    inputs: {},
+    fallbacks: {},
+  };
+
+  const items = [
+    {
+      label: `Text ${serverCaps.models?.text?.preferred ? "Nova" : "Fallback"}`,
+      status: serverCaps.models?.text?.preferred ? "is-ready" : "is-fallback",
+    },
+    {
+      label: `Voice ${serverCaps.models?.voice?.preferred ? "Sonic" : "Fallback"}`,
+      status: serverCaps.models?.voice?.preferred ? "is-ready" : "is-fallback",
+    },
+    {
+      label: `Embeddings ${serverCaps.models?.embeddings?.preferred ? "Ready" : "Fallback"}`,
+      status: serverCaps.models?.embeddings?.preferred ? "is-ready" : "is-fallback",
+    },
+    {
+      label: `Camera ${localInputs.camera ? "Ready" : "Unavailable"}`,
+      status: localInputs.camera ? "is-ready" : "is-fallback",
+    },
+    {
+      label: `Mic ${localInputs.mic ? "Ready" : "Unavailable"}`,
+      status: localInputs.mic ? "is-ready" : "is-fallback",
+    },
+  ];
+
+  capabilityBadges.innerHTML = items.map((item) => `
+    <span class="capability-badge ${item.status}">${escapeHtml(item.label)}</span>
+  `).join("");
+}
+
 function renderSceneInfo() {
   if (!sceneInfo || !objectCount) return;
   const snapshot = currentSnapshot();
@@ -187,6 +265,76 @@ function renderSceneInfo() {
     <p class="muted-text">Focus: <span class="formula">${plan.sceneFocus.primaryInsight || plan.sceneFocus.focusPrompt || "Build the scene and inspect the key relationship."}</span></p>
     ${selectionMarkup}
   `;
+}
+
+function renderSourceEvidence(plan) {
+  if (!sourceEvidenceSection || !sourceEvidence || !sourceEvidenceMode) return;
+  const evidence = plan?.sourceEvidence;
+  if (!evidence) {
+    sourceEvidenceSection.classList.add("hidden");
+    return;
+  }
+
+  sourceEvidenceMode.textContent = evidence.inputMode || "text";
+  const givensMarkup = (evidence.givens || []).length
+    ? `<div class="source-evidence-list">${evidence.givens.map((given) => `<span class="pill subtle">${escapeHtml(given)}</span>`).join("")}</div>`
+    : `<p class="muted-text">No explicit givens extracted.</p>`;
+  const conflictMarkup = (evidence.conflicts || []).length
+    ? `<div class="source-evidence-card"><strong>Conflicts</strong><p class="muted-text" style="margin:6px 0 0">${evidence.conflicts.map(escapeHtml).join(" ")}</p></div>`
+    : "";
+
+  sourceEvidence.innerHTML = `
+    <div class="source-evidence-card">
+      <strong>Diagram summary</strong>
+      <p class="muted-text" style="margin:6px 0 0">${escapeHtml(evidence.diagramSummary || "Nova Prism used the written prompt as the primary source.")}</p>
+    </div>
+    <div class="source-evidence-card">
+      <strong>Parsed givens</strong>
+      ${givensMarkup}
+    </div>
+    ${conflictMarkup}
+  `;
+  sourceEvidenceSection.classList.remove("hidden");
+}
+
+function traceSummaryForAssessment(entry, assessment) {
+  if (!entry || !assessment) return entry?.summary || "";
+  if (entry.id === "build-evaluator") {
+    return `${assessment.summary.matchedRequiredObjects}/${assessment.summary.totalRequiredObjects} required objects matched. ${assessment.guidance?.coachFeedback || ""}`.trim();
+  }
+  if (entry.id === "tutor-coach") {
+    return assessment.guidance?.readyForPrediction
+      ? "The learner is ready to make a prediction from the built scene."
+      : "The tutor is still guiding the next concrete build action.";
+  }
+  return entry.summary || "";
+}
+
+function renderAgentTrace(plan, assessment = tutorState.latestAssessment) {
+  if (!agentTraceSection || !agentTrace) return;
+  const entries = Array.isArray(plan?.agentTrace) ? plan.agentTrace : [];
+  if (!entries.length) {
+    agentTraceSection.classList.add("hidden");
+    return;
+  }
+
+  agentTrace.innerHTML = entries.map((entry) => {
+    const statusClass = /fallback/i.test(entry.status)
+      ? "is-fallback"
+      : /ready|nova|multimodal|live/i.test(entry.status)
+        ? ""
+        : "is-muted";
+    return `
+      <div class="agent-trace-card">
+        <div class="agent-trace-top">
+          <strong>${escapeHtml(entry.label)}</strong>
+          <span class="agent-trace-status ${statusClass}">${escapeHtml(entry.status)}</span>
+        </div>
+        <p class="muted-text" style="margin:0">${escapeHtml(traceSummaryForAssessment(entry, assessment))}</p>
+      </div>
+    `;
+  }).join("");
+  agentTraceSection.classList.remove("hidden");
 }
 
 function renderCameraBookmarks(plan) {
@@ -255,12 +403,13 @@ function renderPlanSummary(plan) {
   planSummary.innerHTML = `
     <p style="margin:0 0 6px"><strong>${plan.sourceSummary.cleanedQuestion || plan.problem.question}</strong></p>
     <p class="muted-text">${plan.sceneFocus.primaryInsight || plan.sceneFocus.focusPrompt}</p>
+    <p class="muted-text" style="margin:8px 0 0">Demo category: <span class="formula">${escapeHtml(plan.demoPreset?.recommendedCategory || "Best of Multimodal Understanding")}</span></p>
     ${givens ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${givens}</div>` : ""}
   `;
 
   if (buildSummary) {
     buildSummary.classList.remove("hidden");
-    buildSummary.textContent = plan.sceneFocus.judgeSummary || plan.overview || "Build the scene, make a prediction, then check the idea in 3D.";
+    buildSummary.textContent = plan.demoPreset?.scriptBeat || plan.sceneFocus.judgeSummary || plan.overview || "Build the scene, make a prediction, then check the idea in 3D.";
   }
 
   planObjects.innerHTML = plan.objectSuggestions.map((suggestion) => `
@@ -294,7 +443,7 @@ function updateStepIndicator() {
   const step = tutorState.getCurrentStep();
   const focus = step?.title || plan.sceneFocus.concept || "Lesson";
   stepIndicator.classList.remove("hidden");
-  stepLabel.textContent = `${stage[0].toUpperCase()}${stage.slice(1)} · ${focus}`;
+  stepLabel.textContent = `${stage[0].toUpperCase()}${stage.slice(1)} - ${focus}`;
   stepPrev.disabled = tutorState.currentStep <= 0;
   stepNext.disabled = tutorState.currentStep >= total - 1;
 }
@@ -343,6 +492,7 @@ function renderLessonCard() {
   challengePromptCard.classList.toggle("hidden", !config.showChallenge || !config.challengeText);
   transcriptDetails.open = !tutorState.transcriptCollapsed;
   followUpDetails.open = !tutorState.followUpCollapsed;
+  renderAgentTrace(plan, assessment);
 }
 
 function sceneContextPayload(plan, assessment) {
@@ -379,6 +529,21 @@ function setQuestionStatus(text = "", type = "hidden") {
   if (type === "error") questionStatus.classList.add("is-error");
 }
 
+function updateVoiceStatus(text = "", tone = "muted") {
+  if (!voiceStatus) return;
+  voiceStatus.textContent = text;
+  voiceStatus.className = "muted-text";
+  if (tone === "error") {
+    voiceStatus.style.color = "var(--danger)";
+    return;
+  }
+  if (tone === "ready") {
+    voiceStatus.style.color = "var(--accent)";
+    return;
+  }
+  voiceStatus.style.color = "";
+}
+
 function revokeQuestionPreview() {
   if (questionImagePreviewUrl) {
     URL.revokeObjectURL(questionImagePreviewUrl);
@@ -398,7 +563,7 @@ function renderQuestionImageState() {
     return;
   }
 
-  questionImageMeta.textContent = `${questionImageFile.name} · ${formatNumber(questionImageFile.size / 1024, 0)} KB`;
+  questionImageMeta.textContent = `${questionImageFile.name} - ${formatNumber(questionImageFile.size / 1024, 0)} KB`;
   revokeQuestionPreview();
   questionImagePreviewUrl = URL.createObjectURL(questionImageFile);
   questionImageThumb.src = questionImagePreviewUrl;
@@ -432,6 +597,7 @@ async function syncAssessment() {
     renderAssessment(assessment);
     renderSceneInfo();
     renderLessonCard();
+    renderAgentTrace(plan, assessment);
     updateStepIndicator();
   } catch (error) {
     console.error("Assessment sync failed:", error);
@@ -449,6 +615,7 @@ function scheduleAssessment() {
 function setPlan(plan, options = {}) {
   const normalizedPlan = normalizeScenePlan(plan);
   activeChallenge = options.challenge || null;
+  voiceConversationId = null;
   tutorState.setPlan(normalizedPlan, { mode: options.mode || normalizedPlan.problem.mode || "guided" });
   tutorState.setPhase("plan_ready");
   tutorState.setLearningStage("orient");
@@ -462,6 +629,8 @@ function setPlan(plan, options = {}) {
   if (answerInput) answerInput.value = "";
 
   renderPlanSummary(normalizedPlan);
+  renderSourceEvidence(normalizedPlan);
+  renderAgentTrace(normalizedPlan);
   renderCameraBookmarks(normalizedPlan);
   renderSceneInfo();
   renderAssessment(null);
@@ -474,27 +643,34 @@ function setPlan(plan, options = {}) {
   }
 }
 
-async function handleQuestionSubmit() {
-  const questionText = questionInput?.value?.trim() || "";
-  if (!questionText && !questionImageFile) return;
+async function handleQuestionSubmit(overrides = {}) {
+  const questionText = (overrides.questionText ?? questionInput?.value?.trim()) || "";
+  const imageFile = overrides.imageFile ?? questionImageFile;
+  if (!questionText && !imageFile) return;
 
   tutorState.reset();
   activeChallenge = null;
   resetLiveChallengeState(null);
   tutorState.setPhase("parsing");
   questionSubmit.disabled = true;
-  setQuestionStatus("Planning a scene-aware lesson with Nova...", "loading");
+  setQuestionStatus("Generating a judge-ready 3D lesson with Nova Prism...", "loading");
 
   try {
     const { scenePlan } = await requestScenePlan({
       questionText,
-      imageFile: questionImageFile,
+      imageFile,
       mode: "guided",
       sceneSnapshot: currentSnapshot(),
     });
     setPlan(scenePlan);
     addTranscriptMessage("system", `Lesson created: "${scenePlan.sourceSummary?.cleanedQuestion || questionText || "Uploaded diagram"}"`);
     setQuestionStatus("", "hidden");
+    if (overrides.autoLoadDraft) {
+      loadDraftScene();
+    }
+    if (overrides.autoNarrate && scenePlan.demoPreset?.scriptBeat) {
+      await speakText(scenePlan.demoPreset.scriptBeat);
+    }
   } catch (error) {
     console.error("Plan request failed:", error);
     tutorState.setError(error.message);
@@ -623,19 +799,30 @@ async function handleExplain() {
   });
 }
 
+async function playReturnedAudio(response) {
+  if (!response?.audioBase64) return false;
+  const binary = atob(response.audioBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  const blob = new Blob([bytes], { type: response.contentType || "audio/wav" });
+  const url = URL.createObjectURL(blob);
+  const audio = new Audio(url);
+  audio.onended = () => URL.revokeObjectURL(url);
+  await audio.play();
+  return true;
+}
+
 async function speakText(text) {
   if (!text) return;
   try {
-    const response = await requestVoiceResponse(text, "auto");
-    if (response.audioBase64) {
-      const binary = atob(response.audioBase64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-      const blob = new Blob([bytes], { type: response.contentType || "audio/mpeg" });
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audio.onended = () => URL.revokeObjectURL(url);
-      await audio.play();
+    const response = await requestVoiceResponse({
+      text,
+      playbackMode: "auto",
+      mode: "narrate",
+    });
+    if (await playReturnedAudio(response)) {
       return;
     }
   } catch (error) {
@@ -646,6 +833,114 @@ async function speakText(text) {
     const utterance = new SpeechSynthesisUtterance(text);
     speechSynthesis.speak(utterance);
   }
+}
+
+async function loadJudgeDemoImage() {
+  try {
+    const response = await fetch(HERO_DEMO.imageUrl);
+    if (!response.ok) throw new Error("Judge demo image unavailable");
+    const blob = await response.blob();
+    return new File([blob], HERO_DEMO.fileName, { type: blob.type || "image/png" });
+  } catch (error) {
+    console.warn("Judge demo image fallback:", error);
+    return null;
+  }
+}
+
+async function handleJudgeDemo() {
+  questionInput.value = HERO_DEMO.question;
+  if (judgeDemoNote) judgeDemoNote.textContent = HERO_DEMO.note;
+  questionImageFile = await loadJudgeDemoImage();
+  renderQuestionImageState();
+  await handleQuestionSubmit({
+    questionText: HERO_DEMO.question,
+    imageFile: questionImageFile,
+    autoLoadDraft: true,
+    autoNarrate: voiceEnabled,
+  });
+}
+
+function buildVoiceContext(plan = activePlan()) {
+  return {
+    plan,
+    sceneSnapshot: currentSnapshot(),
+    sceneContext: sceneContextPayload(plan, tutorState.latestAssessment),
+    learningState: tutorState.snapshot(),
+    contextStepId: tutorState.getCurrentStep()?.id || null,
+  };
+}
+
+async function finishVoiceCapture() {
+  if (!activeMicCapture) return;
+  const micCapture = activeMicCapture;
+  activeMicCapture = null;
+  voiceRecording = false;
+  voiceRecordBtn?.classList.remove("is-recording");
+  if (voiceRecordBtn) voiceRecordBtn.textContent = "Hold to Talk";
+  updateVoiceStatus("Sending audio to Nova Prism...", "ready");
+
+  try {
+    const clip = await micCapture.finish();
+    const response = await requestVoiceResponse({
+      audioBase64: clip.audioBase64,
+      mimeType: clip.mimeType,
+      conversationId: voiceConversationId,
+      mode: "coach",
+      context: buildVoiceContext(),
+      playbackMode: "auto",
+    });
+    voiceConversationId = response.conversationId || voiceConversationId;
+    addTranscriptMessage("user", response.inputTranscript || "Voice question");
+    addTranscriptMessage("tutor", response.assistantText || response.transcript || "Nova Prism did not return a voice reply.");
+    if (!(await playReturnedAudio(response)) && (response.assistantText || response.transcript) && "speechSynthesis" in window) {
+      const utterance = new SpeechSynthesisUtterance(response.assistantText || response.transcript);
+      speechSynthesis.speak(utterance);
+    }
+    updateVoiceStatus(
+      response.fallbackUsed ? "Voice fallback used. Captions are still available." : "Voice reply ready.",
+      response.fallbackUsed ? "muted" : "ready"
+    );
+    syncAssessment();
+  } catch (error) {
+    console.error("Voice capture failed:", error);
+    updateVoiceStatus(`Voice error: ${error.message}`, "error");
+  }
+}
+
+async function toggleVoiceCapture() {
+  if (voiceRecording) {
+    await finishVoiceCapture();
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    updateVoiceStatus("This browser cannot capture microphone audio.", "error");
+    return;
+  }
+
+  try {
+    activeMicCapture = new MicrophoneCapture();
+    await activeMicCapture.start();
+    voiceRecording = true;
+    if (voiceRecordBtn) {
+      voiceRecordBtn.classList.add("is-recording");
+      voiceRecordBtn.textContent = "Send Voice";
+    }
+    updateVoiceStatus("Recording... click again to send your question.", "ready");
+  } catch (error) {
+    console.error("Microphone start failed:", error);
+    updateVoiceStatus(`Mic error: ${error.message}`, "error");
+  }
+}
+
+async function loadCapabilitiesState() {
+  try {
+    capabilitiesState = await fetchCapabilities();
+  } catch (error) {
+    console.warn("Capability fetch failed:", error);
+    capabilitiesState = null;
+  }
+  renderCapabilities();
+  updateVoiceStatus("Mic ready for push-to-talk when the lesson is loaded.", "muted");
 }
 
 function advanceLessonStage() {
@@ -820,6 +1115,9 @@ function bindEvents() {
     renderQuestionImageState();
   });
 
+  judgeDemoBtn?.addEventListener("click", handleJudgeDemo);
+  buildFromDiagramBtn?.addEventListener("click", () => questionImageInput?.click());
+
   addAllBtn?.addEventListener("click", loadDraftScene);
   stepByStepBtn?.addEventListener("click", beginGuidedBuild);
   buildManuallyBtn?.addEventListener("click", beginManualBuild);
@@ -843,6 +1141,7 @@ function bindEvents() {
     voiceToggle.setAttribute("aria-pressed", String(voiceEnabled));
     voiceToggle.textContent = voiceEnabled ? "Voice On" : "Voice";
   });
+  voiceRecordBtn?.addEventListener("click", toggleVoiceCapture);
 
   chatSend?.addEventListener("click", () => {
     const text = chatInput?.value?.trim();
@@ -895,6 +1194,15 @@ function bindDom() {
   questionImagePreview = document.getElementById("questionImagePreview");
   questionImageThumb = document.getElementById("questionImageThumb");
   questionImageClear = document.getElementById("questionImageClear");
+  capabilityBadges = document.getElementById("capabilityBadges");
+  judgeDemoBtn = document.getElementById("judgeDemoBtn");
+  buildFromDiagramBtn = document.getElementById("buildFromDiagramBtn");
+  judgeDemoNote = document.getElementById("judgeDemoNote");
+  sourceEvidenceSection = document.getElementById("sourceEvidenceSection");
+  sourceEvidenceMode = document.getElementById("sourceEvidenceMode");
+  sourceEvidence = document.getElementById("sourceEvidence");
+  agentTraceSection = document.getElementById("agentTraceSection");
+  agentTrace = document.getElementById("agentTrace");
   scenePlanSection = document.getElementById("scenePlanSection");
   planSummary = document.getElementById("planSummary");
   buildSummary = document.getElementById("buildSummary");
@@ -923,6 +1231,8 @@ function bindDom() {
   transcriptDetails = document.getElementById("transcriptDetails");
   chatMessages = document.getElementById("chatMessages");
   followUpDetails = document.getElementById("followUpDetails");
+  voiceRecordBtn = document.getElementById("voiceRecordBtn");
+  voiceStatus = document.getElementById("voiceStatus");
   chatInput = document.getElementById("chatInput");
   chatSend = document.getElementById("chatSend");
   answerSection = document.getElementById("answerSection");
@@ -960,7 +1270,9 @@ export function initTutorController(context) {
   renderSceneInfo();
   renderLessonCard();
   updateStepIndicator();
+  renderCapabilities();
   loadChallengesList();
+  loadCapabilitiesState();
 
   sceneApi.onSceneEvent((detail) => {
     if (detail.type === "objects") {
@@ -989,3 +1301,4 @@ export function updateTutorLabels() {
   }
   syncUnfoldDrawer();
 }
+

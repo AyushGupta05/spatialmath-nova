@@ -17,11 +17,29 @@ test("normalizeScenePlan preserves lesson metadata and fills defaults", () => {
       labels: ["r", "h"],
       relationships: ["radius and height belong to the same cylinder"],
       diagramSummary: "A labelled cylinder diagram.",
+      conflicts: ["Image labels radius as 4, but text says 3."],
+    },
+    sourceEvidence: {
+      inputMode: "multimodal",
+      givens: ["radius = 3", "height = 7"],
+      diagramSummary: "A labelled cylinder diagram.",
+      conflicts: ["Image labels radius as 4, but text says 3."],
     },
     sceneFocus: {
       concept: "radius vs height",
       primaryInsight: "Radius and height play different roles in the volume formula.",
       focusPrompt: "Focus on which measurement is radial and which is vertical.",
+    },
+    agentTrace: [{
+      id: "source-interpreter",
+      label: "Source Interpreter",
+      status: "multimodal",
+      summary: "Parsed text and image.",
+    }],
+    demoPreset: {
+      title: "Judge demo",
+      scriptBeat: "Turn the diagram into a scene.",
+      recommendedCategory: "Best of Multimodal Understanding",
     },
     learningMoments: {
       predict: {
@@ -51,10 +69,13 @@ test("normalizeScenePlan preserves lesson metadata and fills defaults", () => {
 
   assert.equal(plan.sourceSummary.inputMode, "multimodal");
   assert.deepEqual(plan.sourceSummary.givens, ["radius = 3", "height = 7"]);
+  assert.deepEqual(plan.sourceEvidence.conflicts, ["Image labels radius as 4, but text says 3."]);
   assert.equal(plan.sceneFocus.concept, "radius vs height");
   assert.equal(plan.objectSuggestions[0].roles[0], "primary");
   assert.deepEqual(plan.objectSuggestions[0].object.metadata.roles, ["primary", "cylinder"]);
   assert.equal(plan.learningMoments.predict.prompt, "Which visible value is the radius?");
   assert.equal(plan.learningMoments.reflect.title, "Reflect");
   assert.ok(plan.learningMoments.challenge.whyItMatters.length > 0);
+  assert.equal(plan.agentTrace[0].id, "source-interpreter");
+  assert.equal(plan.demoPreset.recommendedCategory, "Best of Multimodal Understanding");
 });

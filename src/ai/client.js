@@ -30,7 +30,16 @@ export async function requestScenePlan({ questionText = "", question = "", image
     });
   }
 
-  return readJsonOrError(response, "Failed to generate scene plan");
+  const payload = await readJsonOrError(response, "Failed to generate scene plan");
+  if (payload?.scenePlan) {
+    payload.scenePlan = {
+      ...payload.scenePlan,
+      sourceEvidence: payload.sourceEvidence || payload.scenePlan.sourceEvidence || null,
+      agentTrace: payload.agentTrace || payload.scenePlan.agentTrace || [],
+      demoPreset: payload.demoPreset || payload.scenePlan.demoPreset || null,
+    };
+  }
+  return payload;
 }
 
 export async function evaluateBuild({ plan, sceneSnapshot, currentStepId = null }) {
@@ -87,16 +96,30 @@ export async function askTutor({ plan, sceneSnapshot, sceneContext = null, learn
   return { text: fullText, assessment: latestAssessment };
 }
 
-export async function requestVoiceResponse(text, playbackMode = "auto") {
+export async function requestVoiceResponse(input, playbackMode = "auto") {
+  const payload = typeof input === "string"
+    ? { text: input, playbackMode, mode: "narrate" }
+    : { playbackMode, ...input };
   const response = await fetch(`${API_BASE}/voice/respond`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, playbackMode }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
-    return { transcript: text, audioBase64: null, contentType: null, source: "browser-fallback" };
+    return {
+      transcript: typeof input === "string" ? input : input?.text || "",
+      audioBase64: null,
+      contentType: null,
+      source: "browser-fallback",
+      fallbackUsed: true,
+    };
   }
   return response.json();
+}
+
+export async function fetchCapabilities() {
+  const response = await fetch(`${API_BASE}/capabilities`);
+  return readJsonOrError(response, "Failed to load capabilities");
 }
 
 export async function fetchChallenges() {

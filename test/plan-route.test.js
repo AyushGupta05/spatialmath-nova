@@ -9,12 +9,31 @@ test("POST /api/plan multipart requests pass image and scene snapshot to the pla
     planGenerator: async (payload) => {
       capturedPayload = payload;
       return {
-        problem: {
-          question: payload.questionText || "diagram only",
-          questionType: "spatial",
+        scenePlan: {
+          problem: {
+            question: payload.questionText || "diagram only",
+            questionType: "spatial",
+          },
+          objectSuggestions: [],
+          buildSteps: [],
         },
-        objectSuggestions: [],
-        buildSteps: [],
+        sourceEvidence: {
+          inputMode: "multimodal",
+          givens: ["radius = 3"],
+          diagramSummary: "Worksheet diagram",
+          conflicts: [],
+        },
+        agentTrace: [{
+          id: "source-interpreter",
+          label: "Source Interpreter",
+          status: "multimodal",
+          summary: "Parsed worksheet data.",
+        }],
+        demoPreset: {
+          title: "Judge demo",
+          scriptBeat: "Diagram to 3D lesson",
+          recommendedCategory: "Best of Multimodal Understanding",
+        },
       };
     },
   });
@@ -33,6 +52,9 @@ test("POST /api/plan multipart requests pass image and scene snapshot to the pla
 
   assert.equal(response.status, 200);
   assert.equal(payload.scenePlan.problem.question, "Interpret this diagram");
+  assert.equal(payload.sourceEvidence.inputMode, "multimodal");
+  assert.equal(payload.agentTrace[0].id, "source-interpreter");
+  assert.equal(payload.demoPreset.recommendedCategory, "Best of Multimodal Understanding");
   assert.equal(capturedPayload.questionText, "Interpret this diagram");
   assert.equal(capturedPayload.mode, "guided");
   assert.deepEqual(capturedPayload.sceneSnapshot, { objects: [], selectedObjectId: null });

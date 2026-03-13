@@ -219,6 +219,12 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 5px; }
   margin: 0; font-family: "Exo 2", "Space Grotesk", sans-serif;
   font-size: 0.86rem; font-weight: 600; letter-spacing: 0.05em;
 }
+.section-subtitle {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
 .pill {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 30px; height: 22px; padding: 0 8px; border-radius: 999px;
@@ -229,6 +235,55 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 5px; }
 .pill.subtle { color: var(--muted); border-color: rgba(76, 133, 196, 0.16); background: rgba(8, 18, 34, 0.82); }
 
 /* Question Input */
+.capability-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.capability-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(76, 133, 196, 0.18);
+  background: rgba(8, 18, 34, 0.78);
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.capability-badge.is-ready {
+  color: var(--accent);
+  border-color: rgba(122, 247, 228, 0.22);
+  background: rgba(122, 247, 228, 0.08);
+}
+.capability-badge.is-fallback {
+  color: #ffd966;
+  border-color: rgba(255, 217, 102, 0.24);
+  background: rgba(255, 217, 102, 0.08);
+}
+.hero-cta-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.hero-cta-btn { min-height: 40px; }
+.judge-demo-note {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(72, 201, 255, 0.18);
+  background:
+    linear-gradient(180deg, rgba(12, 25, 44, 0.92), rgba(8, 18, 34, 0.82)),
+    radial-gradient(circle at right top, rgba(122, 247, 228, 0.1), transparent 42%);
+  color: var(--text);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
 .question-textarea {
   width: 100%; min-height: 72px; max-height: 160px;
   padding: 10px 12px; border: 1px solid rgba(76, 133, 196, 0.22); border-radius: 10px;
@@ -347,6 +402,18 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 5px; }
   gap: 10px;
   padding: 0 14px 14px;
 }
+.voice-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 0;
+}
+.voice-record-btn { min-width: 120px; }
+.voice-record-btn.is-recording {
+  color: #07111d;
+  background: linear-gradient(180deg, #ffcf7b, #ffb84a);
+  border-color: rgba(255, 217, 102, 0.68);
+}
 
 /* Scene info */
 .scene-info { font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
@@ -410,6 +477,43 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 5px; }
 .scene-plan {
   display: flex; flex-direction: column; gap: 12px;
 }
+.source-evidence,
+.agent-trace {
+  display: grid;
+  gap: 8px;
+}
+.source-evidence-card,
+.agent-trace-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(76, 133, 196, 0.18);
+  background: rgba(8, 18, 34, 0.72);
+}
+.source-evidence-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.source-evidence-list .pill {
+  min-width: auto;
+}
+.agent-trace-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.agent-trace-status {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.agent-trace-status.is-fallback { color: #ffd966; }
+.agent-trace-status.is-muted { color: var(--muted); }
 .plan-summary {
   padding: 10px 12px; border-radius: 8px;
   background: rgba(122, 247, 228, 0.08); border: 1px solid rgba(122, 247, 228, 0.2);
@@ -1212,6 +1316,7 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 5px; }
   .left-panel { border-right: 0; border-bottom: 1px solid var(--line); max-height: 240px; overflow-y: auto; }
   .brand-lockup { display: none; }
   .lesson-grid { grid-template-columns: 1fr; }
+  .hero-cta-row { grid-template-columns: 1fr; }
   .unfold-drawer {
     left: 12px;
     width: auto;

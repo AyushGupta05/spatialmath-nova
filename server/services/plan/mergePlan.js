@@ -40,5 +40,10 @@ export function mergeGeneratedPlan({ baselinePlan, novaPlan, workingQuestion, mo
       ? novaPlan.challengePrompts
       : baselinePlan.challengePrompts,
     liveChallenge: novaPlan.liveChallenge || baselinePlan.liveChallenge || null,
+    sourceEvidence: novaPlan.sourceEvidence || baselinePlan.sourceEvidence || null,
+    agentTrace: (novaPlan.agentTrace?.length || 0)
+      ? novaPlan.agentTrace
+      : baselinePlan.agentTrace,
+    demoPreset: novaPlan.demoPreset || baselinePlan.demoPreset || null,
   });
 }
