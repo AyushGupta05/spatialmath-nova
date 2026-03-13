@@ -40,6 +40,7 @@ import {
   MIN_TRANSFORM_SPAN, MIN_MESH_SCALE, MAX_MESH_SCALE,
   TRANSFORM_LOCK_MS,
   TRANSFORM_SCALE_SMOOTHING, TRANSFORM_ROTATION_SMOOTHING,
+  TRANSFORM_ROTATE_INTENT_THRESHOLD, TRANSFORM_ROTATE_RELEASE_THRESHOLD,
   PLACEMENT_PREVIEW_OPACITY, PLACEMENT_SURFACE_GAP, PLACEMENT_COLLISION_TOLERANCE,
   PLACEMENT_NEAR_SNAP_BASE, PLACEMENT_NEAR_SNAP_GAIN, PLACEMENT_SURFACE_NUDGE_LIMIT,
   SHAPE_OPTIONS, SIGNALS,
@@ -1347,7 +1348,15 @@ export function bootstrapApp() {
 
   function resolveTransformIntent(session, currentSpan, leftWristAngle, rightWristAngle, rotatePoseActive) {
     if (!session) return null;
-    if (rotatePoseActive) {
+    const leftDelta = leftWristAngle != null && session.startLeftWristAngle != null
+      ? Math.abs(shortestAngleDelta(session.startLeftWristAngle, leftWristAngle))
+      : 0;
+    const rightDelta = rightWristAngle != null && session.startRightWristAngle != null
+      ? Math.abs(shortestAngleDelta(session.startRightWristAngle, rightWristAngle))
+      : 0;
+    const wristDeltaMagnitude = Math.max(leftDelta, rightDelta);
+
+    if (rotatePoseActive || wristDeltaMagnitude >= TRANSFORM_ROTATE_INTENT_THRESHOLD) {
       if (session.intent !== "rotate") {
         session.intent = "rotate";
         session.startRotationX = session.mesh?.rotation?.x || 0;
@@ -1358,6 +1367,9 @@ export function bootstrapApp() {
       return session.intent;
     }
     if (session.intent === "rotate") {
+      if (wristDeltaMagnitude >= TRANSFORM_ROTATE_RELEASE_THRESHOLD) {
+        return session.intent;
+      }
       session.intent = null;
       session.startSpan = Math.max(MIN_TRANSFORM_SPAN, currentSpan || MIN_TRANSFORM_SPAN);
       session.startParams = sceneParamsFromMesh(session.mesh);

@@ -18,6 +18,51 @@ function midpoint(a, b) {
   };
 }
 
+function vecSub(a, b) {
+  return {
+    x: (a?.x || 0) - (b?.x || 0),
+    y: (a?.y || 0) - (b?.y || 0),
+    z: (a?.z || 0) - (b?.z || 0),
+  };
+}
+
+function vecDot(a, b) {
+  return ((a?.x || 0) * (b?.x || 0)) + ((a?.y || 0) * (b?.y || 0)) + ((a?.z || 0) * (b?.z || 0));
+}
+
+function vecCross(a, b) {
+  return {
+    x: ((a?.y || 0) * (b?.z || 0)) - ((a?.z || 0) * (b?.y || 0)),
+    y: ((a?.z || 0) * (b?.x || 0)) - ((a?.x || 0) * (b?.z || 0)),
+    z: ((a?.x || 0) * (b?.y || 0)) - ((a?.y || 0) * (b?.x || 0)),
+  };
+}
+
+function vecLength(vector) {
+  return Math.hypot(vector?.x || 0, vector?.y || 0, vector?.z || 0);
+}
+
+function vecNormalize(vector) {
+  const length = vecLength(vector);
+  if (length < 1e-6) return null;
+  return {
+    x: vector.x / length,
+    y: vector.y / length,
+    z: vector.z / length,
+  };
+}
+
+function projectOntoPlane(vector, normal) {
+  const axis = vecNormalize(normal);
+  if (!axis) return null;
+  const dot = vecDot(vector, axis);
+  return {
+    x: (vector?.x || 0) - (axis.x * dot),
+    y: (vector?.y || 0) - (axis.y * dot),
+    z: (vector?.z || 0) - (axis.z * dot),
+  };
+}
+
 export function isFistPose(hand) {
   if (!hand) return false;
   const scale = palmScale(hand);
@@ -179,10 +224,24 @@ export function isDirectPinchPose(hand) {
  */
 export function computeWristAngle(hand) {
   if (!hand) return null;
+  const wrist = hand[0];
+  const middleMcp = hand[9];
   const indexMcp = hand[5];
   const pinkyMcp = hand[17];
-  if (!indexMcp || !pinkyMcp) return null;
-  return Math.atan2(pinkyMcp.y - indexMcp.y, pinkyMcp.x - indexMcp.x);
+  if (!wrist || !middleMcp || !indexMcp || !pinkyMcp) return null;
+
+  const forearmAxis = vecNormalize(vecSub(middleMcp, wrist));
+  const palmAcross = vecNormalize(projectOntoPlane(vecSub(pinkyMcp, indexMcp), forearmAxis));
+  const reference = vecNormalize(projectOntoPlane({ x: 1, y: 0, z: 0 }, forearmAxis))
+    || vecNormalize(projectOntoPlane({ x: 0, y: -1, z: 0 }, forearmAxis));
+
+  if (!forearmAxis || !palmAcross || !reference) {
+    return Math.atan2(pinkyMcp.y - indexMcp.y, pinkyMcp.x - indexMcp.x);
+  }
+
+  const sin = vecDot(vecCross(reference, palmAcross), forearmAxis);
+  const cos = vecDot(reference, palmAcross);
+  return Math.atan2(sin, cos);
 }
 
 /**

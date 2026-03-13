@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Nova Prism - Live 3D Lesson Studio</title>
+    <title>Nova Prism - Scene-Aware Tutor</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -28,7 +28,7 @@
       <header class="topbar">
         <div class="brand-lockup">
           <p class="eyebrow">Nova Prism</p>
-          <h1>Live 3D Lesson Studio</h1>
+          <h1>Scene-Aware Tutor</h1>
         </div>
 
         <div class="topbar-tools">
@@ -159,35 +159,39 @@
           <!-- TUTOR TAB CONTENT -->
           <div class="tab-content active" data-content="tutor">
 
-            <section class="question-section">
-              <div class="card-heading">
-                <div>
-                  <h2>Nova Prism</h2>
+            <section id="questionSection" class="question-section">
+              <button id="lessonPanelToggle" class="lesson-panel-toggle" type="button" aria-expanded="true">
+                <div class="lesson-panel-copy">
+                  <h2>Start a Lesson</h2>
                   <p class="section-subtitle">Upload a diagram or type a prompt. The tutor will turn it into a staged 3D lesson.</p>
+                  <p id="lessonPanelSummary" class="question-summary hidden"></p>
                 </div>
+                <span class="lesson-panel-icon" aria-hidden="true">&#9662;</span>
+              </button>
+              <div id="questionSectionBody" class="question-section-body">
+                <div class="question-input-wrap">
+                  <textarea
+                    id="questionInput"
+                    class="question-textarea"
+                    placeholder="Paste a spatial maths prompt or upload a worksheet diagram...&#10;e.g. &quot;What happens to the volume of a cylinder with radius 3 and height 7 if the radius doubles?&quot;"
+                    rows="3"
+                  ></textarea>
+                  <div class="question-upload-row">
+                    <label for="questionImageInput" id="questionImageTrigger" class="question-upload-btn">Add Diagram</label>
+                    <input id="questionImageInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+                    <div id="questionImageMeta" class="question-image-meta hidden"></div>
+                    <button id="questionImageClear" class="question-upload-clear hidden" type="button">Remove</button>
+                  </div>
+                  <div id="questionImagePreview" class="question-image-preview hidden">
+                    <img id="questionImageThumb" alt="Uploaded diagram preview" />
+                  </div>
+                  <button id="questionSubmit" class="question-submit-btn" type="button">
+                    <span class="submit-icon">&#10148;</span>
+                    <span>Start Lesson</span>
+                  </button>
+                </div>
+                <div id="questionStatus" class="question-status hidden"></div>
               </div>
-              <div class="question-input-wrap">
-                <textarea
-                  id="questionInput"
-                  class="question-textarea"
-                  placeholder="Paste a spatial maths prompt or upload a worksheet diagram...&#10;e.g. &quot;What happens to the volume of a cylinder with radius 3 and height 7 if the radius doubles?&quot;"
-                  rows="3"
-                ></textarea>
-                <div class="question-upload-row">
-                  <label for="questionImageInput" id="questionImageTrigger" class="question-upload-btn">Add Diagram</label>
-                  <input id="questionImageInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
-                  <div id="questionImageMeta" class="question-image-meta hidden"></div>
-                  <button id="questionImageClear" class="question-upload-clear hidden" type="button">Remove</button>
-                </div>
-                <div id="questionImagePreview" class="question-image-preview hidden">
-                  <img id="questionImageThumb" alt="Uploaded diagram preview" />
-                </div>
-                <button id="questionSubmit" class="question-submit-btn" type="button">
-                  <span class="submit-icon">&#10148;</span>
-                  <span>Start Lesson</span>
-                </button>
-              </div>
-              <div id="questionStatus" class="question-status hidden"></div>
             </section>
 
             <section class="chat-lesson-shell">
@@ -232,19 +236,6 @@
                   />
                   <button id="chatSend" class="chat-send-btn" type="button">&#10148;</button>
                 </div>
-                <div id="answerSection" class="answer-section hidden">
-                  <div class="answer-input-wrap">
-                    <input
-                      id="answerInput"
-                      class="answer-input"
-                      type="number"
-                      step="any"
-                      placeholder="Your answer..."
-                    />
-                    <button id="answerSubmit" class="answer-submit-btn" type="button">Check</button>
-                  </div>
-                  <div id="answerFeedback" class="answer-feedback hidden"></div>
-                </div>
               </div>
             </section>
 
@@ -260,7 +251,7 @@
                 <span id="objectCount" class="pill">0</span>
               </div>
               <div id="sceneInfo" class="scene-info">
-                <p class="muted-text">Ask a question or pick a challenge to generate a 3D scene.</p>
+                <p class="muted-text">Add a prompt or diagram to generate a 3D lesson scene.</p>
               </div>
             </section>
 

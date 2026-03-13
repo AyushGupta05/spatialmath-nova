@@ -78,4 +78,10 @@ test("normalizeScenePlan preserves lesson metadata and fills defaults", () => {
   assert.ok(plan.learningMoments.challenge.whyItMatters.length > 0);
   assert.equal(plan.agentTrace[0].id, "source-interpreter");
   assert.equal(plan.demoPreset.recommendedCategory, "Best of Multimodal Understanding");
+  assert.equal(plan.lessonStages.length, 1);
+  assert.equal(plan.lessonStages[0].id, "step-main");
+  assert.equal(plan.lessonStages[0].title, "Place the cylinder");
+  assert.equal(plan.lessonStages[0].checkpointPrompt, "Does this look correct?");
+  assert.ok(plan.lessonStages[0].suggestedActions.some((action) => action.kind === "preview-required-object"));
+  assert.ok(plan.lessonStages[0].suggestedActions.some((action) => action.kind === "build-manually"));
 });
