@@ -71,28 +71,6 @@ h1 {
   margin-left: auto; min-width: 0;
 }
 
-/* Mode Toggle */
-.mode-toggle {
-  display: flex; border: 1px solid var(--line); border-radius: 8px;
-  overflow: hidden; flex-shrink: 0;
-}
-.mode-btn {
-  border: none; padding: 6px 16px; cursor: pointer;
-  background: transparent; color: var(--muted);
-  font-size: 0.78rem; font-weight: 600;
-  letter-spacing: 0.04em; transition: all 140ms ease;
-}
-.mode-btn.is-active {
-  background: rgba(122, 247, 228, 0.12);
-  color: var(--accent); border-color: var(--accent);
-}
-.mode-btn:hover:not(.is-active) { color: var(--text); background: rgba(255,255,255,0.04); }
-.demo-btn {
-  border: 1px solid rgba(255, 217, 102, 0.28); color: #ffd966;
-  border-radius: 8px; font-size: 0.76rem;
-}
-.demo-btn:hover { background: rgba(255, 217, 102, 0.1); color: #ffe699; border-color: rgba(255, 217, 102, 0.5); }
-
 /* Tool buttons */
 .tool-cluster { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .tool-btn, .panel-btn {

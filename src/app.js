@@ -1225,26 +1225,29 @@ export function bootstrapApp() {
 
   function resolveTransformIntent(session, currentSpan, leftWristAngle, rightWristAngle, rotatePoseActive) {
     if (!session) return null;
-    if (session.intent === "scale") return session.intent;
-    if (session.intent === "rotate" && rotatePoseActive) return session.intent;
-    if (session.intent === "rotate" && !rotatePoseActive) {
+    if (rotatePoseActive) {
+      if (session.intent !== "rotate") {
+        session.intent = "rotate";
+        session.startRotationX = session.mesh?.rotation?.x || 0;
+        session.startRotationY = session.mesh?.rotation?.y || 0;
+        session.startLeftWristAngle = leftWristAngle;
+        session.startRightWristAngle = rightWristAngle;
+      }
+      return session.intent;
+    }
+    if (session.intent === "rotate") {
       session.intent = null;
+      session.startSpan = Math.max(MIN_TRANSFORM_SPAN, currentSpan || MIN_TRANSFORM_SPAN);
+      session.startParams = sceneParamsFromMesh(session.mesh);
     }
 
     const spanBaseline = Math.max(MIN_TRANSFORM_SPAN, session.startSpan || MIN_TRANSFORM_SPAN);
     const spanDeltaRatio = Math.abs((currentSpan - spanBaseline) / spanBaseline);
-    const rotationYDelta = leftWristAngle != null && session.startLeftWristAngle != null
-      ? Math.abs(shortestAngleDelta(session.startLeftWristAngle, leftWristAngle))
-      : 0;
-    const rotationXDelta = rightWristAngle != null && session.startRightWristAngle != null
-      ? Math.abs(shortestAngleDelta(session.startRightWristAngle, rightWristAngle))
-      : 0;
-    const rotationDelta = Math.max(rotationXDelta, rotationYDelta);
 
-    if (spanDeltaRatio >= 0.08 && spanDeltaRatio >= (rotationDelta * 1.2)) {
+    if (spanDeltaRatio >= 0.06) {
       session.intent = "scale";
-    } else if (rotatePoseActive && rotationDelta >= 0.16) {
-      session.intent = "rotate";
+    } else if (session.intent === "scale" && spanDeltaRatio < 0.025) {
+      session.intent = null;
     }
 
     return session.intent;
@@ -2062,32 +2065,35 @@ export function bootstrapApp() {
     const thumbTip = hand[4];
     const thumbIp = hand[3];
     const thumbMcp = hand[2];
-
     const indexExtended =
-      (lmkDist(indexTip, palmCenter) / scale) > 1.1 &&
-      (lmkDist(indexTip, wrist) / scale) > 1.4 &&
-      lmkDist(indexTip, wrist) > lmkDist(indexPip, wrist) * 1.12 &&
-      indexTip.y < indexPip.y - 0.03 &&
-      indexTip.y < indexMcp.y - 0.06;
+      (lmkDist(indexTip, palmCenter) / scale) > 1.02 &&
+      lmkDist(indexTip, wrist) > lmkDist(indexPip, wrist) * 1.08 &&
+      lmkDist(indexTip, wrist) > lmkDist(indexMcp, wrist) * 1.18;
     const middleExtended =
-      (lmkDist(middleTip, palmCenter) / scale) > 1.08 &&
-      (lmkDist(middleTip, wrist) / scale) > 1.35 &&
-      lmkDist(middleTip, wrist) > lmkDist(middlePip, wrist) * 1.1 &&
-      middleTip.y < middlePip.y - 0.025 &&
-      middleTip.y < middleMcp.y - 0.05;
-    const ringCurled =
-      (lmkDist(ringTip, palmCenter) / scale) < 1.02 &&
-      lmkDist(ringTip, wrist) <= Math.max(lmkDist(ringPip, wrist), lmkDist(ringMcp, wrist)) * 1.08;
-    const pinkyCurled =
-      (lmkDist(pinkyTip, palmCenter) / scale) < 1.03 &&
-      lmkDist(pinkyTip, wrist) <= Math.max(lmkDist(pinkyPip, wrist), lmkDist(pinkyMcp, wrist)) * 1.08;
-    const fingerSplitWide = (lmkDist(indexTip, middleTip) / scale) > 0.34;
+      (lmkDist(middleTip, palmCenter) / scale) > 1.02 &&
+      lmkDist(middleTip, wrist) > lmkDist(middlePip, wrist) * 1.08 &&
+      lmkDist(middleTip, wrist) > lmkDist(middleMcp, wrist) * 1.18;
+    const ringExtended =
+      (lmkDist(ringTip, palmCenter) / scale) > 0.96 &&
+      lmkDist(ringTip, wrist) > lmkDist(ringPip, wrist) * 1.05 &&
+      lmkDist(ringTip, wrist) > lmkDist(ringMcp, wrist) * 1.12;
+    const pinkyExtended =
+      (lmkDist(pinkyTip, palmCenter) / scale) > 0.92 &&
+      lmkDist(pinkyTip, wrist) > lmkDist(pinkyPip, wrist) * 1.04 &&
+      lmkDist(pinkyTip, wrist) > lmkDist(pinkyMcp, wrist) * 1.08;
+    const spreadDistances = [
+      lmkDist(indexTip, middleTip) / scale,
+      lmkDist(middleTip, ringTip) / scale,
+      lmkDist(ringTip, pinkyTip) / scale,
+    ];
+    const spreadCount = spreadDistances.filter((distance) => distance > 0.2).length;
     const thumbOpen =
-      (lmkDist(thumbTip, palmCenter) / scale) > 1.02 &&
+      (lmkDist(thumbTip, palmCenter) / scale) > 0.92 &&
       (lmkDist(thumbTip, thumbMcp) / scale) > 0.48 &&
       lmkDist(thumbTip, wrist) > lmkDist(thumbIp, wrist) * 1.04;
+    const extendedCount = [indexExtended, middleExtended, ringExtended, pinkyExtended].filter(Boolean).length;
 
-    return indexExtended && middleExtended && ringCurled && pinkyCurled && fingerSplitWide && thumbOpen;
+    return indexExtended && middleExtended && extendedCount >= 3 && spreadCount >= 2 && thumbOpen;
   }
 
   function classifySignal(primary, interaction) {

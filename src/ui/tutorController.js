@@ -1053,11 +1053,6 @@ function bindEvents() {
     tutorState.setFollowUpCollapsed(!followUpDetails.open);
   });
 
-  document.getElementById("demoBtn")?.addEventListener("click", async () => {
-    questionInput.value = "A cylinder has radius 3 and height 10. Predict whether doubling the radius or doubling the height changes the volume more.";
-    await handleQuestionSubmit();
-  });
-
   stepPrev?.addEventListener("click", () => {
     tutorState.prevStep();
     updateStepIndicator();
@@ -1169,10 +1164,6 @@ export function initTutorController(context) {
     syncUnfoldDrawer();
   });
 
-  if (new URLSearchParams(window.location.search).has("demo")) {
-    questionInput.value = "A cylinder has radius 3 and height 10. Predict whether doubling the radius or doubling the height changes the volume more.";
-    handleQuestionSubmit();
-  }
 }
 
 export function updateTutorLabels() {
