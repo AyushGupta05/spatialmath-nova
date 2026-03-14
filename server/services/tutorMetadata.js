@@ -29,23 +29,17 @@ function stageActionsForReply(plan, stage, learningState = {}, assessment = null
     const sceneIndex = Math.max(0, plan.sceneMoments.findIndex((moment) => moment.id === sceneMoment?.id));
     const includeNext = sceneIndex < Math.max(plan.sceneMoments.length - 1, 0);
     const actions = [
-      {
-        id: `${stage.id}-formula`,
-        label: "Show Formula",
-        kind: "show-formula",
-        payload: { stageId: stage.id },
-      },
       includeNext
         ? {
           id: `${stage.id}-next`,
-          label: "Next Visual Step",
+          label: "What's next?",
           kind: "reveal-next-step",
           payload: { stageId: stage.id },
         }
         : null,
       {
         id: `${stage.id}-solution`,
-        label: "Reveal Full Solution",
+        label: "View Solution",
         kind: "reveal-full-solution",
         payload: { stageId: stage.id },
       },
@@ -74,13 +68,13 @@ function stageActionsForReply(plan, stage, learningState = {}, assessment = null
   actions.push(
     {
       id: `${stage.id}-explain`,
-      label: (learningState?.learningStage || "orient") === "orient" ? "Explain the Scene" : "Explain This Step",
+      label: (learningState?.learningStage || "orient") === "orient" ? "Give me a hint" : "I'm stuck",
       kind: "explain-stage",
       payload: { stageId: stage.id },
     },
     {
       id: `${stage.id}-continue`,
-      label: "Continue",
+      label: "I think I see it",
       kind: "continue-stage",
       payload: { stageId: stage.id },
     },

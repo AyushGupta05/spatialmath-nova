@@ -57,7 +57,14 @@ export function buildTutorSystemPrompt({ plan, sceneSnapshot, sceneContext, lear
   const learningStage = learningState?.learningStage || "orient";
   const learningMoment = normalizedPlan.learningMoments?.[learningStage] || {};
 
-  return `You are Nova Prism acting as a concise, calm, scene-aware spatial tutor.
+  return `You are Nova Prism, a spatial-maths tutor inspired by 3Blue1Brown's visual teaching and Khan Academy's Socratic tutoring.
+
+Your core philosophy:
+- NEVER give the answer directly. Guide the learner to discover it themselves through the 3D scene.
+- Show, don't tell. Point to what's visible in the scene rather than explaining abstractly.
+- Ask one focused question at a time. "What do you notice about..." or "What would happen if..."
+- Build intuition before formulas. The scene IS the explanation.
+- Be warm, curious, and brief. Sound like a thoughtful guide, not a textbook.
 
 Problem: ${normalizedPlan.sourceSummary.cleanedQuestion || normalizedPlan.problem.question}
 Question type: ${normalizedPlan.problem.questionType}
@@ -93,20 +100,24 @@ ${assessment.guidance?.coachFeedback || "n/a"}
 Answer gate:
 ${assessment.answerGate.reason}
 
-Conversation guidance:
-- Be concise by default.
-- Keep the learner involved in building, predicting, and reasoning.
-- Respond in at most two short paragraphs, usually one.
-- Never sound like a general chatbot.
-- If the build is incomplete, direct attention to the missing object or measurement.
-- If the stage is predict, help the learner commit to a prediction instead of explaining everything.
-- If the stage is check, refer to what the learner can inspect or change in the current scene.
-- If the stage is reflect, help the learner state the spatial idea in one short sentence.
-- Do not dump the full solution unless the learner explicitly asks.
-- Reference objects and helpers already in the scene when possible.
-- When a selected object is available, anchor explanations to its actual dimensions and current metrics.
-- When a live challenge is active, relate the reply to the current value, target, and tolerance.
-- If the learner asks for a hint, give the next useful action, not the full answer.`;
+Conversation rules:
+- Keep responses to 1-2 short sentences. One focused thought per reply.
+- ALWAYS end with a question that nudges the learner to think or look at the scene. Examples:
+  "What do you notice about how these two shapes compare?"
+  "Look at the highlighted edge. What happens to the volume if you stretch it?"
+  "Before I show you the formula, what's your gut feeling?"
+- When the learner asks "what's the answer?" or "just tell me", respond with:
+  "Let's figure it out together. Look at [specific scene element] - what does it tell you?"
+  If they insist, say: "I can show you the solution - tap 'View Solution' when you're ready. But first, what's your best guess?"
+- If the build is incomplete, point to the specific missing piece in the scene.
+- If the stage is predict, help them commit to a prediction. Don't explain yet.
+- If the stage is check, ask them to compare their prediction with what the scene shows.
+- If the stage is reflect, prompt them to state the insight in their own words.
+- Reference specific objects by name. Say "look at cylinder A" not "consider the shape."
+- When a selected object is available, anchor to its actual dimensions and metrics.
+- When the learner is stuck, give the smallest useful nudge, not a full explanation.
+- Never recite formulas unless the learner has already attempted reasoning and asks to see one.
+- Never say "Great question!" or similar filler. Jump straight into the guiding thought.`;
 }
 
 export function buildFallbackTutorReply({ plan, assessment, sceneContext, userMessage, contextStepId }) {
@@ -146,41 +157,41 @@ export function buildFallbackTutorReply({ plan, assessment, sceneContext, userMe
     return `The live ${liveChallenge.metric === "surfaceArea" ? "surface area" : "volume"} target is ${liveChallenge.targetValue ?? "not set yet"}. The current value is ${liveChallenge.currentValue ?? "unknown"} and Nova accepts about +/-${liveChallenge.toleranceValue ?? "0"} tolerance.`;
   }
 
-  if (/(hint|next)/.test(lowerMessage)) {
+  if (/(hint|next|stuck|help)/.test(lowerMessage)) {
     if (missingTitles.length) {
-      return `Next, add ${missingTitles.join(" and ")} for ${currentStep?.title || "the active step"}. That will move the build closer to the formula.`;
+      return `Look at the scene. What's missing? Think about what ${missingTitles.join(" and ")} would add to the picture.`;
     }
     if (assessment?.guidance?.readyForPrediction) {
-      return "The scene is ready. Make a short prediction about what matters most before asking for the explanation.";
+      return "The scene is set. Before I explain anything, what's your gut feeling about the answer?";
     }
     if (!assessment?.answerGate?.allowed) {
-      return "Your next move is to finish the required scene objects so the lesson can move into prediction.";
+      return "There's still something to build. Look at the scene - what shape or relationship is missing?";
     }
     if (liveChallenge?.unlocked && !liveChallenge.complete) {
-      return `Try reshaping the main object so its ${liveChallenge.metric === "surfaceArea" ? "surface area" : "volume"} moves from ${liveChallenge.currentValue} toward ${liveChallenge.targetValue}.`;
+      return `What would you need to change so the ${liveChallenge.metric === "surfaceArea" ? "surface area" : "volume"} moves from ${liveChallenge.currentValue} toward ${liveChallenge.targetValue}?`;
     }
   }
 
   if (/(why|explain|formula)/.test(lowerMessage)) {
     if (selected) {
-      return `You're currently focused on ${selected.label}. Its dimensions are ${JSON.stringify(selected.params)}, which is why Nova tracks volume ${selected.metrics?.volume ?? "unknown"} and surface area ${selected.metrics?.surfaceArea ?? "unknown"} directly from the scene. ${normalizedPlan.answerScaffold.formula ? `The target formula here is ${normalizedPlan.answerScaffold.formula}.` : ""}`.trim();
+      return `Look at ${selected.label}. Its volume is ${selected.metrics?.volume ?? "unknown"} and surface area is ${selected.metrics?.surfaceArea ?? "unknown"}. What do those numbers tell you about the shape?`;
     }
-    return `Nova is using the built scene to map the measurements into ${normalizedPlan.answerScaffold.formula || "the problem formula"}. ${missingTitles.length ? `Right now the missing pieces are ${missingTitles.join(", ")}.` : "The required objects are already in place."}`;
+    return `Look at the objects in the scene. ${missingTitles.length ? `What would change if you added ${missingTitles.join(", ")}?` : "What relationship do you notice between them?"}`;
   }
 
   if (learningStage === "predict-ready") {
-    return "The scene is ready for a prediction. Name the measurement, direction, or change you expect to matter most.";
+    return "The scene is ready. Before we go further, what do you think the answer will be?";
   }
 
   if (!assessment?.answerGate?.allowed) {
     return missingTitles.length
-      ? `The build is not complete yet. For ${currentStep?.title || "the current step"}, add ${missingTitles.join(" and ")}.`
-      : "The build is still incomplete. Keep matching the required objects from the scene plan before solving.";
+      ? `Look at the scene. What would ${missingTitles.join(" and ")} add to the picture?`
+      : "There's more to build. What do you think is missing from the scene?";
   }
 
   if (liveChallenge?.unlocked && !liveChallenge.complete) {
-    return `The required build is complete. The live challenge is active: current ${liveChallenge.metric === "surfaceArea" ? "surface area" : "volume"} ${liveChallenge.currentValue}, target ${liveChallenge.targetValue}.`;
+    return `The scene is built. The ${liveChallenge.metric === "surfaceArea" ? "surface area" : "volume"} is currently ${liveChallenge.currentValue}. How would you get it to ${liveChallenge.targetValue}?`;
   }
 
-  return `The scene is in a good state to reason from. ${normalizedPlan.answerScaffold.formula ? `Use ${normalizedPlan.answerScaffold.formula} with the measurements already visible in the scene.` : "Ask about any measurement or relationship you want to inspect next."}`;
+  return "What do you notice in the scene? What stands out to you?";
 }

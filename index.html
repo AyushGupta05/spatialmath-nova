@@ -162,8 +162,7 @@
             <section id="questionSection" class="question-section">
               <button id="lessonPanelToggle" class="lesson-panel-toggle" type="button" aria-expanded="true">
                 <div class="lesson-panel-copy">
-                  <h2>Start a Lesson</h2>
-                  <p class="section-subtitle">Upload or paste a diagram, or type a prompt. The tutor will turn it into a staged 3D lesson.</p>
+                  <h2>What would you like to explore?</h2>
                   <p id="lessonPanelSummary" class="question-summary hidden"></p>
                 </div>
                 <span class="lesson-panel-icon" aria-hidden="true">&#9662;</span>
@@ -173,11 +172,11 @@
                   <textarea
                     id="questionInput"
                     class="question-textarea"
-                    placeholder="Paste a spatial maths prompt or upload a worksheet diagram...&#10;e.g. &quot;What happens to the volume of a cylinder with radius 3 and height 7 if the radius doubles?&quot;"
-                    rows="3"
+                    placeholder="Type a question or paste a diagram...&#10;e.g. &quot;What happens to the volume when you double the radius of a cylinder?&quot;"
+                    rows="2"
                   ></textarea>
                   <div class="question-upload-row">
-                    <label for="questionImageInput" id="questionImageTrigger" class="question-upload-btn">Add or Paste Image</label>
+                    <label for="questionImageInput" id="questionImageTrigger" class="question-upload-btn">Attach Image</label>
                     <input id="questionImageInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
                     <div id="questionImageMeta" class="question-image-meta hidden"></div>
                     <button id="questionImageClear" class="question-upload-clear hidden" type="button">Remove</button>
@@ -187,7 +186,7 @@
                   </div>
                   <button id="questionSubmit" class="question-submit-btn" type="button">
                     <span class="submit-icon">&#10148;</span>
-                    <span>Start Lesson</span>
+                    <span>Explore</span>
                   </button>
                 </div>
                 <div id="questionStatus" class="question-status hidden"></div>
@@ -196,25 +195,17 @@
 
             <section class="chat-lesson-shell">
               <div id="stageRail" class="stage-rail hidden">
-                <div class="stage-rail-top">
-                  <div>
-                    <p class="stage-rail-label">Current Stage</p>
-                    <h3 id="stageRailTitle" class="stage-rail-title">Stage 1</h3>
-                  </div>
-                  <span id="stageRailProgress" class="pill subtle">0 / 0</span>
-                </div>
-                <p id="stageRailGoal" class="stage-rail-goal">Start a lesson to see the current build goal.</p>
+                <span id="stageRailProgress" class="stage-rail-step-pill">1 / 3</span>
+                <p id="stageRailGoal" class="stage-rail-goal"></p>
+                <h3 id="stageRailTitle" class="stage-rail-title hidden"></h3>
               </div>
 
               <section id="formulaCard" class="formula-card hidden" aria-live="polite">
                 <div class="formula-card-head">
-                  <div>
-                    <p class="stage-rail-label">Relevant Formula</p>
-                    <h3 id="formulaCardTitle" class="formula-card-title">Formula</h3>
-                  </div>
+                  <h3 id="formulaCardTitle" class="formula-card-title">Formula</h3>
                   <div class="formula-card-actions">
-                    <button id="formulaCardRevealBtn" class="plan-btn btn-secondary" type="button">Reveal Full Solution</button>
-                    <button id="formulaCardCloseBtn" class="plan-btn btn-ghost" type="button">Close</button>
+                    <button id="formulaCardRevealBtn" class="plan-btn btn-secondary" type="button">View Solution</button>
+                    <button id="formulaCardCloseBtn" class="formula-card-dismiss" type="button">&times;</button>
                   </div>
                 </div>
                 <p id="formulaCardEquation" class="formula-card-equation"></p>
@@ -223,45 +214,40 @@
 
               <section id="solutionDrawer" class="solution-drawer hidden" aria-live="polite">
                 <div class="formula-card-head">
-                  <div>
-                    <p class="stage-rail-label">Worked Solution</p>
-                    <h3 id="solutionDrawerTitle" class="formula-card-title">Worked Solution</h3>
-                  </div>
-                  <button id="solutionDrawerClose" class="plan-btn btn-ghost" type="button">Hide</button>
+                  <h3 id="solutionDrawerTitle" class="formula-card-title">Worked Solution</h3>
+                  <button id="solutionDrawerClose" class="formula-card-dismiss" type="button">&times;</button>
                 </div>
                 <div id="solutionDrawerSteps" class="solution-drawer-steps"></div>
               </section>
 
               <div id="chatMessages" class="chat-messages tutor-thread">
                 <div class="chat-welcome">
-                  <p class="chat-welcome-title">Scene-aware tutor</p>
-                  <p class="chat-welcome-text">Bring in a question or worksheet diagram and the tutor will guide the lesson step by step.</p>
+                  <p class="chat-welcome-title">Let's explore together</p>
+                  <p class="chat-welcome-text">Ask a question and I'll build a 3D scene to help you see the idea.</p>
                 </div>
               </div>
 
               <div id="chatCheckpoint" class="chat-checkpoint hidden">
                 <p id="chatCheckpointPrompt" class="chat-checkpoint-prompt">Does this look correct?</p>
                 <div class="chat-checkpoint-actions">
-                  <button id="checkpointYesBtn" class="plan-btn btn-secondary" type="button">Yes</button>
-                  <button id="checkpointUnsureBtn" class="plan-btn btn-ghost" type="button">Not sure</button>
+                  <button id="checkpointYesBtn" class="plan-btn btn-secondary" type="button">Yes, continue</button>
+                  <button id="checkpointUnsureBtn" class="plan-btn btn-ghost" type="button">I'm not sure</button>
                 </div>
               </div>
 
               <div class="chat-composer">
-                <div class="voice-input-row">
-                  <button id="voiceRecordBtn" class="tutor-action-btn voice-record-btn" type="button">Hold to Talk</button>
-                  <p id="voiceStatus" class="muted-text">Mic ready when the lesson is loaded.</p>
-                </div>
-                <div class="chat-input-wrap lesson-follow-up">
+                <div class="chat-input-wrap">
+                  <button id="voiceRecordBtn" class="voice-mic-btn" type="button" aria-label="Voice input">&#127908;</button>
                   <input
                     id="chatInput"
                     class="chat-input"
                     type="text"
-                    placeholder="Ask the tutor or type your next step..."
+                    placeholder="What do you think happens next?"
                     autocomplete="off"
                   />
                   <button id="chatSend" class="chat-send-btn" type="button">&#10148;</button>
                 </div>
+                <p id="voiceStatus" class="voice-status-text hidden"></p>
               </div>
             </section>
 

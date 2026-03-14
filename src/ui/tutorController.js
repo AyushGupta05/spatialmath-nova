@@ -49,7 +49,6 @@ let chatSend;
 let voiceRecordBtn;
 let voiceStatus;
 let stageRail;
-let stageRailTitle;
 let stageRailProgress;
 let stageRailGoal;
 let chatCheckpoint;
@@ -80,17 +79,6 @@ function formatNumber(value, digits = 2) {
 
 function formatKilobytes(bytes) {
   return `${formatNumber(Number(bytes) / 1024, 0)} KB`;
-}
-
-function withFollowUp(text = "") {
-  const trimmed = String(text || "").trim();
-  if (!trimmed) {
-    return "Feel free to ask any questions.";
-  }
-  if (/feel free to ask any questions\.?$/i.test(trimmed)) {
-    return trimmed;
-  }
-  return `${trimmed} Feel free to ask any questions.`;
 }
 
 function activePlan() {
@@ -209,8 +197,8 @@ function clearTranscript() {
   if (!chatMessages) return;
   chatMessages.innerHTML = `
     <div class="chat-welcome">
-      <p class="chat-welcome-title">Scene-aware tutor</p>
-      <p class="chat-welcome-text">Upload a diagram or paste a prompt, then let the tutor guide the build one stage at a time.</p>
+      <p class="chat-welcome-title">Let's explore together</p>
+      <p class="chat-welcome-text">Ask a question and I'll build a 3D scene to help you see the idea.</p>
     </div>
   `;
 }
@@ -230,8 +218,13 @@ function setQuestionStatus(text = "", tone = "hidden") {
 function updateVoiceStatus(text = "", tone = "muted") {
   if (!voiceStatus) return;
   voiceStatus.textContent = text;
-  voiceStatus.className = "muted-text";
+  voiceStatus.className = "voice-status-text";
   voiceStatus.style.color = "";
+  if (!text || tone === "hidden") {
+    voiceStatus.classList.add("hidden");
+    return;
+  }
+  voiceStatus.classList.remove("hidden");
   if (tone === "ready") voiceStatus.style.color = "var(--accent)";
   if (tone === "error") voiceStatus.style.color = "var(--danger)";
 }
@@ -393,18 +386,36 @@ function stageActionsForClient(plan = activePlan(), assessment = tutorState.late
 
   const stage = currentLessonStage(plan);
   if (isAnalyticPlan(plan)) {
-    return stage?.suggestedActions?.length ? stage.suggestedActions : [];
+    const analyticActions = [];
+    const moment = currentSceneMoment(plan);
+    const sceneIndex = Math.max(0, (plan.sceneMoments || []).findIndex((m) => m.id === moment?.id));
+    const hasNext = sceneIndex < Math.max((plan.sceneMoments || []).length - 1, 0);
+    if (hasNext) {
+      analyticActions.push({
+        id: `${stage?.id || "analytic"}-next`,
+        label: "What's next?",
+        kind: "reveal-next-step",
+        payload: { stageId: stage?.id || null },
+      });
+    }
+    analyticActions.push({
+      id: `${stage?.id || "analytic"}-solution`,
+      label: "View Solution",
+      kind: "reveal-full-solution",
+      payload: { stageId: stage?.id || null },
+    });
+    return analyticActions;
   }
   const learningStage = tutorState.learningStage;
-  const defaultExplain = {
+  const hintAction = {
     id: `${stage?.id || learningStage}-explain`,
-    label: learningStage === "orient" ? "Explain the Scene" : "Explain This Step",
+    label: learningStage === "orient" ? "Give me a hint" : "I'm stuck",
     kind: "explain-stage",
     payload: { stageId: stage?.id || null },
   };
   const continueAction = {
     id: `${stage?.id || learningStage}-continue`,
-    label: learningStage === "reflect" ? "Open Questions" : "Continue",
+    label: learningStage === "reflect" ? "Keep exploring" : "I think I see it",
     kind: "continue-stage",
     payload: { stageId: stage?.id || null },
   };
@@ -413,8 +424,8 @@ function stageActionsForClient(plan = activePlan(), assessment = tutorState.late
       || {
         id: `${stage?.id || "lesson"}-preview`,
         label: nextRequiredSuggestion(plan, assessment)?.title
-          ? `Preview ${nextRequiredSuggestion(plan, assessment).title}`
-          : "Preview Scene",
+          ? `Show me ${nextRequiredSuggestion(plan, assessment).title}`
+          : "Show me in the scene",
         kind: "preview-required-object",
         payload: {
           stageId: stage?.id || null,
@@ -429,7 +440,7 @@ function stageActionsForClient(plan = activePlan(), assessment = tutorState.late
   if (previewAction?.payload?.objectSpec) {
     actions.push(previewAction);
   }
-  actions.push(defaultExplain, continueAction);
+  actions.push(hintAction, continueAction);
   return actions.slice(0, 3);
 }
 
@@ -450,36 +461,34 @@ function buildStageIntroMessage(plan = activePlan(), assessment = tutorState.lat
 
   const learningStage = tutorState.learningStage;
   const stage = currentLessonStage(plan);
-  const index = currentStageIndex(plan);
 
   if (isAnalyticPlan(plan) && stage) {
-    return withFollowUp(stage.tutorIntro || stage.goal || currentSceneMoment(plan)?.prompt || "");
+    const moment = currentSceneMoment(plan);
+    return moment?.prompt || stage.tutorIntro || stage.goal || "Take a look at the scene. What stands out to you?";
   }
 
   if ((learningStage === "orient" || learningStage === "build") && stage) {
-    const stageNumber = index >= 0 ? index + 1 : 1;
-    const feedbackSource = assessment?.guidance?.coachFeedback || lastSceneFeedback;
-    const feedback = feedbackSource ? ` ${feedbackSource}` : "";
-    return `Stage ${stageNumber}: ${stage.title}. ${stage.tutorIntro} Goal: ${stage.goal}.${feedback}`.trim();
+    const intro = stage.tutorIntro || stage.goal || "";
+    const question = assessment?.guidance?.coachFeedback || lastSceneFeedback || "";
+    return intro
+      ? `${intro} ${question}`.trim()
+      : `Look at the scene. ${question || "What do you notice?"}`;
   }
 
   if (learningStage === "predict") {
     const moment = plan.learningMoments?.predict || {};
-    return `${moment.title || "Prediction"}. ${moment.coachMessage || "Pause before solving and make one short prediction."} ${moment.prompt || "What do you expect to happen?"}`.trim();
+    return moment.prompt || "Before we go further, what's your gut feeling about what happens here?";
   }
 
   if (learningStage === "check") {
-    const moment = plan.learningMoments?.check || {};
-    return `${moment.title || "Tutor feedback"}. ${moment.coachMessage || "Use the scene to test your prediction."} ${lastSceneFeedback || moment.goal || "Inspect the object or helper that controls the idea."}`.trim();
+    return "Now look at the scene. Does it match what you expected?";
   }
 
   if (learningStage === "reflect") {
-    const moment = plan.learningMoments?.reflect || {};
-    return `${moment.title || "Reflect"}. ${moment.coachMessage || "Say what became clearer once you saw it in 3D."} ${lastSceneFeedback || moment.goal || "Summarize the key insight in one sentence."}`.trim();
+    return "In your own words, what's the key idea you just saw?";
   }
 
-  const moment = plan.learningMoments?.challenge || {};
-  return `${moment.title || "Free questions"}. ${moment.coachMessage || "Ask anything about the scene and I will keep the answer grounded in what you built."}`.trim();
+  return "The scene is yours to explore. What are you curious about?";
 }
 
 function updateComposerState() {
@@ -487,20 +496,15 @@ function updateComposerState() {
   if (chatInput) {
     chatInput.disabled = !hasPlan;
     if (!hasPlan) {
-      chatInput.placeholder = "Start a lesson above to chat with the tutor...";
-    } else if (isAnalyticPlan()) {
-      chatInput.placeholder = "Ask about the scene, formula, or the current visual step...";
+      chatInput.placeholder = "What would you like to explore?";
     } else if (tutorState.learningStage === "predict" && !tutorState.predictionState.submitted) {
-      chatInput.placeholder = "Type your one-sentence prediction...";
+      chatInput.placeholder = "What's your prediction?";
     } else {
-      chatInput.placeholder = "Ask a question about the current scene...";
+      chatInput.placeholder = "What do you think happens next?";
     }
   }
   if (chatSend) chatSend.disabled = !hasPlan;
   if (voiceRecordBtn) voiceRecordBtn.disabled = !hasPlan;
-  if (!hasPlan) {
-    updateVoiceStatus("Mic ready when a lesson is loaded.", "muted");
-  }
 }
 
 function setCheckpointState(checkpoint = null) {
@@ -555,7 +559,7 @@ function renderAnalyticPanels(plan = activePlan()) {
 
 function updateStageRail() {
   const plan = activePlan();
-  if (!stageRail || !stageRailTitle || !stageRailProgress || !stageRailGoal) return;
+  if (!stageRail || !stageRailProgress || !stageRailGoal) return;
   if (!plan) {
     stageRail.classList.add("hidden");
     updateComposerState();
@@ -565,32 +569,26 @@ function updateStageRail() {
   const stage = currentLessonStage(plan);
   const stageIndex = currentStageIndex(plan);
   const learningStage = tutorState.learningStage;
-  const assessment = tutorState.latestAssessment;
 
   stageRail.classList.remove("hidden");
 
   if ((learningStage === "orient" || learningStage === "build") && stage) {
-    stageRailTitle.textContent = stage.title;
-    stageRailProgress.textContent = `Stage ${Math.max(stageIndex + 1, 1)} / ${plan.lessonStages.length}`;
-    stageRailGoal.textContent = assessment?.guidance?.coachFeedback || stage.goal || plan.sceneFocus?.focusPrompt || "Build the next important relationship.";
+    stageRailProgress.textContent = `${Math.max(stageIndex + 1, 1)} / ${plan.lessonStages.length}`;
+    stageRailGoal.textContent = stage.goal || plan.sceneFocus?.focusPrompt || "";
   } else if (learningStage === "predict") {
-    stageRailTitle.textContent = plan.learningMoments?.predict?.title || "Prediction";
-    stageRailProgress.textContent = "Next";
+    stageRailProgress.textContent = "Predict";
     stageRailGoal.textContent = tutorState.predictionState.submitted
-      ? "Use the scene to test the prediction you just made."
-      : plan.learningMoments?.predict?.prompt || "Make one short prediction before moving on.";
+      ? "Check your prediction against the scene."
+      : "What's your gut feeling?";
   } else if (learningStage === "check") {
-    stageRailTitle.textContent = plan.learningMoments?.check?.title || "Tutor Feedback";
     stageRailProgress.textContent = "Check";
-    stageRailGoal.textContent = assessment?.guidance?.coachFeedback || plan.learningMoments?.check?.goal || "Inspect the scene and see whether the prediction holds.";
+    stageRailGoal.textContent = "Compare your prediction with the scene.";
   } else if (learningStage === "reflect") {
-    stageRailTitle.textContent = plan.learningMoments?.reflect?.title || "Reflect";
     stageRailProgress.textContent = "Reflect";
-    stageRailGoal.textContent = plan.learningMoments?.reflect?.goal || "Say what became clearer once the scene was built.";
+    stageRailGoal.textContent = "What's the key idea?";
   } else {
-    stageRailTitle.textContent = plan.learningMoments?.challenge?.title || "Free Questions";
-    stageRailProgress.textContent = "Ask Anything";
-    stageRailGoal.textContent = plan.learningMoments?.challenge?.goal || "Ask anything about the model and the tutor will keep bringing the answer back to the scene.";
+    stageRailProgress.textContent = "Explore";
+    stageRailGoal.textContent = "";
   }
 
   renderAnalyticPanels(plan);
@@ -833,8 +831,7 @@ async function syncAssessment() {
 
     if (checkpointKey && checkpointKey !== lastCheckpointKey) {
       lastCheckpointKey = checkpointKey;
-      setCheckpointState({ prompt: currentLessonStage(plan)?.checkpointPrompt || "Does this look correct?" });
-      addTranscriptMessage("system", assessment.guidance?.coachFeedback || "This stage looks complete. Check it before moving on.");
+      setCheckpointState({ prompt: currentLessonStage(plan)?.checkpointPrompt || "Does this match what you expected?" });
     } else if (!checkpointKey) {
       setCheckpointState(null);
     }
@@ -892,7 +889,6 @@ function setPlan(plan, options = {}) {
     addTranscriptMessage("system", systemContext);
   }
   announceCurrentStage(true);
-  updateVoiceStatus("Mic ready. Hold to talk when you want to ask out loud.", "muted");
 }
 
 async function handleQuestionSubmit(overrides = {}) {
@@ -970,7 +966,7 @@ function beginGuidedBuild() {
   tutorState.setLearningStage("build");
   sceneApi?.cancelPreviewAction?.();
   sceneApi?.clearScene?.();
-  lastSceneFeedback = "Build the scene one meaningful piece at a time. The tutor will watch for the next required object.";
+  lastSceneFeedback = "";
   setCheckpointState(null);
   updateStageRail();
   announceCurrentStage(true);
@@ -989,7 +985,7 @@ function beginManualBuild() {
   tutorState.setLearningStage("build");
   sceneApi?.cancelPreviewAction?.();
   sceneApi?.clearScene?.();
-  lastSceneFeedback = "Manual placement is active. The tutor will still react to each object you add.";
+  lastSceneFeedback = "";
   setCheckpointState(null);
   updateStageRail();
   announceCurrentStage(true);
@@ -1074,8 +1070,8 @@ async function sendTutorMessage(messageText, options = {}) {
 }
 
 async function handleExplain() {
-  await sendTutorMessage(`Explain the current ${tutorState.learningStage} stage using the scene in two short sentences.`, {
-    userLabel: "Explain this stage",
+  await sendTutorMessage(`I'm stuck. Give me a small hint about what to focus on in the scene, without giving me the answer.`, {
+    userLabel: "I need a hint",
   });
 }
 
@@ -1089,9 +1085,9 @@ async function handleComposerSubmit() {
   if (tutorState.learningStage === "predict" && !tutorState.predictionState.submitted) {
     tutorState.submitPrediction(text);
     tutorState.setLearningStage("check");
-    lastSceneFeedback = `Prediction saved: "${text}". Now inspect the scene and test it.`;
-    addTranscriptMessage("user", `Prediction: ${text}`);
-    addTranscriptMessage("tutor", "Good. Now use the scene to test that prediction and ask if anything looks off.", {
+    lastSceneFeedback = "";
+    addTranscriptMessage("user", text);
+    addTranscriptMessage("tutor", "Interesting. Now look at the scene - does it match what you predicted?", {
       actions: stageActionsForClient(plan),
     });
     setCheckpointState(null);
@@ -1134,8 +1130,8 @@ async function finishVoiceCapture() {
   activeMicCapture = null;
   voiceRecording = false;
   voiceRecordBtn?.classList.remove("is-recording");
-  if (voiceRecordBtn) voiceRecordBtn.textContent = "Hold to Talk";
-  updateVoiceStatus("Sending audio to Nova Prism...", "ready");
+  if (voiceRecordBtn) voiceRecordBtn.textContent = "\u{1F3A4}";
+  updateVoiceStatus("Listening...", "ready");
 
   try {
     const clip = await capture.finish();
@@ -1156,10 +1152,7 @@ async function finishVoiceCapture() {
       speechSynthesis.speak(utterance);
     }
 
-    updateVoiceStatus(
-      response.fallbackUsed ? "Voice fallback used. Captions are still available." : "Voice reply ready.",
-      response.fallbackUsed ? "muted" : "ready"
-    );
+    updateVoiceStatus("", "hidden");
     syncAssessment();
   } catch (error) {
     console.error("Voice capture failed:", error);
@@ -1184,12 +1177,12 @@ async function toggleVoiceCapture() {
     voiceRecording = true;
     if (voiceRecordBtn) {
       voiceRecordBtn.classList.add("is-recording");
-      voiceRecordBtn.textContent = "Send Voice";
+      voiceRecordBtn.textContent = "\u25A0";
     }
-    updateVoiceStatus("Recording... click again to send your question.", "ready");
+    updateVoiceStatus("Recording...", "ready");
   } catch (error) {
     console.error("Microphone start failed:", error);
-    updateVoiceStatus(`Mic error: ${error.message}`, "error");
+    updateVoiceStatus("", "hidden");
   }
 }
 
@@ -1200,7 +1193,7 @@ function advanceLessonStage() {
   if (isAnalyticPlan(plan)) {
     if (tutorState.currentStep < plan.lessonStages.length - 1) {
       tutorState.nextStep();
-      lastSceneFeedback = currentLessonStage(plan)?.goal || "Move to the next visual step.";
+      lastSceneFeedback = "";
       setCheckpointState(null);
       updateStageRail();
       applyAnalyticSceneState({ forceCamera: true });
@@ -1222,7 +1215,7 @@ function advanceLessonStage() {
   if (tutorState.learningStage === "build") {
     if (tutorState.currentStep < plan.lessonStages.length - 1) {
       tutorState.nextStep();
-      lastSceneFeedback = currentLessonStage(plan)?.goal || "Move to the next stage of the build.";
+      lastSceneFeedback = "";
       setCheckpointState(null);
       updateStageRail();
       announceCurrentStage(true);
@@ -1232,7 +1225,7 @@ function advanceLessonStage() {
 
     tutorState.setLearningStage("predict");
     tutorState.resetPrediction(plan.learningMoments?.predict?.prompt || "");
-    lastSceneFeedback = "Pause here and make one short prediction before asking for the explanation.";
+    lastSceneFeedback = "";
     setCheckpointState(null);
     updateStageRail();
     announceCurrentStage(true);
@@ -1241,11 +1234,11 @@ function advanceLessonStage() {
 
   if (tutorState.learningStage === "predict") {
     if (!tutorState.predictionState.submitted) {
-      addTranscriptMessage("system", "Type your prediction into the composer first.");
+      addTranscriptMessage("tutor", "Before we move on, type what you think will happen.");
       return;
     }
     tutorState.setLearningStage("check");
-    lastSceneFeedback = "Use the scene to test the prediction you just made.";
+    lastSceneFeedback = "";
     updateStageRail();
     announceCurrentStage(true);
     return;
@@ -1253,7 +1246,7 @@ function advanceLessonStage() {
 
   if (tutorState.learningStage === "check") {
     tutorState.setLearningStage("reflect");
-    lastSceneFeedback = "Say what became clearer once you manipulated the model.";
+    lastSceneFeedback = "";
     updateStageRail();
     announceCurrentStage(true);
     return;
@@ -1261,7 +1254,7 @@ function advanceLessonStage() {
 
   if (tutorState.learningStage === "reflect") {
     tutorState.setLearningStage("challenge");
-    lastSceneFeedback = "Free questions are open. The tutor will keep grounding answers in the scene.";
+    lastSceneFeedback = "";
     updateStageRail();
     announceCurrentStage(true);
   }
@@ -1274,21 +1267,11 @@ async function handleTutorAction(action = {}) {
   switch (action.kind) {
     case "highlight-key-idea":
       applyAnalyticSceneState({ forceCamera: true });
-      addTranscriptMessage("system", withFollowUp(currentSceneMoment(plan)?.goal || "Highlighted the current idea in the scene."));
       break;
     case "show-formula":
       analyticFormulaVisible = true;
       analyticFormulaDismissed = false;
       renderAnalyticPanels(plan);
-      addTranscriptMessage(
-        "system",
-        withFollowUp(
-          [
-            plan.analyticContext?.formulaCard?.formula || plan.answerScaffold?.formula || "Relevant formula revealed.",
-            plan.analyticContext?.formulaCard?.explanation || plan.answerScaffold?.explanation || "",
-          ].filter(Boolean).join(" ")
-        )
-      );
       break;
     case "reveal-next-step":
       advanceLessonStage();
@@ -1302,7 +1285,6 @@ async function handleTutorAction(action = {}) {
       }
       applyAnalyticSceneState({ forceCamera: true });
       renderAnalyticPanels(plan);
-      addTranscriptMessage("system", withFollowUp("Full worked solution revealed."));
       break;
     case "reset-view":
       applyAnalyticSceneState({ forceCamera: true });
@@ -1323,17 +1305,17 @@ async function handleTutorAction(action = {}) {
       const preview = sceneApi?.previewAction?.(preparedAction.payload || preparedAction);
       if (preview) {
         focusStageTargets(preparedAction.payload.highlightTargets || [], { selectFirst: false });
-        addTranscriptMessage("system", `Previewing ${preview.label || preview.shape}. Confirm the ghost placement if it matches the stage goal.`, {
+        addTranscriptMessage("tutor", `Here's ${preview.label || preview.shape}. Does this look right to you?`, {
           actions: [
             {
               id: `${preparedAction.id}-confirm`,
-              label: "Confirm Placement",
+              label: "Place it",
               kind: "confirm-preview",
               payload: { stageId: preparedAction.payload?.stageId || null },
             },
             {
               id: `${preparedAction.id}-cancel`,
-              label: "Cancel Preview",
+              label: "Not quite",
               kind: "cancel-preview",
               payload: { stageId: preparedAction.payload?.stageId || null },
             },
@@ -1345,7 +1327,6 @@ async function handleTutorAction(action = {}) {
     case "confirm-preview": {
       const placedObject = sceneApi?.confirmPreviewAction?.();
       if (placedObject) {
-        addTranscriptMessage("system", `Placed ${placedObject.label || placedObject.shape}.`);
         scheduleAssessment();
       }
       break;
@@ -1353,7 +1334,6 @@ async function handleTutorAction(action = {}) {
     case "cancel-preview":
       sceneApi?.cancelPreviewAction?.();
       focusStageTargets(stageFocusTargets(plan));
-      addTranscriptMessage("system", "Preview cancelled. Choose another tutor action or place the object manually.");
       break;
     case "explain-stage":
       await handleExplain();
@@ -1373,8 +1353,8 @@ async function handleTutorAction(action = {}) {
       advanceLessonStage();
       break;
     case "show-mistake":
-      await sendTutorMessage(action.payload?.prompt || "Show me the mistake in this stage and explain what should be different.", {
-        userLabel: "Show me the mistake",
+      await sendTutorMessage(action.payload?.prompt || "Something doesn't look right. Give me a nudge about what to check in the scene.", {
+        userLabel: "Something's off - help me see it",
       });
       break;
     default:
@@ -1399,14 +1379,11 @@ function handleSceneMutation(detail) {
   }
 
   if (detail.reason === "place" && detail.object?.label) {
-    lastSceneFeedback = `Placed ${detail.object.label}. The tutor is checking how it fits the current goal.`;
-    addTranscriptMessage("system", lastSceneFeedback);
+    lastSceneFeedback = `Placed ${detail.object.label}.`;
   } else if (detail.reason === "drag-end" && detail.object?.label) {
-    lastSceneFeedback = `Updated ${detail.object.label}. Check whether that changes the focus relationship.`;
-    addTranscriptMessage("system", lastSceneFeedback);
+    lastSceneFeedback = `Updated ${detail.object.label}.`;
   } else if (detail.reason === "remove" && detail.object?.label) {
-    lastSceneFeedback = `Removed ${detail.object.label}. The tutor will adjust the stage guidance.`;
-    addTranscriptMessage("system", lastSceneFeedback);
+    lastSceneFeedback = `Removed ${detail.object.label}.`;
   }
 
   if (tutorState.learningStage === "predict" && tutorState.predictionState.submitted) {
@@ -1517,7 +1494,6 @@ function bindDom() {
   voiceRecordBtn = document.getElementById("voiceRecordBtn");
   voiceStatus = document.getElementById("voiceStatus");
   stageRail = document.getElementById("stageRail");
-  stageRailTitle = document.getElementById("stageRailTitle");
   stageRailProgress = document.getElementById("stageRailProgress");
   stageRailGoal = document.getElementById("stageRailGoal");
   chatCheckpoint = document.getElementById("chatCheckpoint");
@@ -1563,7 +1539,6 @@ export function initTutorController(context) {
   updateStageRail();
   renderAnalyticPanels(null);
   updateComposerState();
-  updateVoiceStatus("Mic ready when the lesson is loaded.", "muted");
   stepIndicator?.classList.add("hidden");
 
   sceneApi.onSceneEvent((detail) => {
