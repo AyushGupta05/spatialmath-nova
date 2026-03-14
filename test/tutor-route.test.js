@@ -257,6 +257,33 @@ test("POST /api/tutor supports freeform scene chat without a lesson plan", async
   assert.match(text, /scene|line|point|angle|connector/i);
 });
 
+test("POST /api/tutor freeform requests fall back safely when the freeform generator throws", async () => {
+  const tutorRoute = createTutorRoute({
+    freeformTurnGenerator: async () => {
+      throw new Error("boom");
+    },
+  });
+
+  const response = await tutorRoute.request("/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sceneSnapshot: { objects: [], selectedObjectId: null },
+      learningState: { history: [] },
+      userMessage: "What can you do?",
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  const payloads = parseSsePayloads(await response.text());
+  const meta = payloads.find((entry) => entry.type === "meta")?.content;
+  const text = payloads.filter((entry) => entry.type === "text").map((entry) => entry.content).join("");
+
+  assert.equal(meta.mode, "freeform");
+  assert.match(text, /AI backend|scene|build/i);
+  assert.equal(payloads.some((entry) => entry.type === "done"), true);
+});
+
 test("POST /api/tutor/similar returns similar question suggestions", async () => {
   const tutorRoute = createTutorRoute({
     similarQuestionGenerator: async () => ([

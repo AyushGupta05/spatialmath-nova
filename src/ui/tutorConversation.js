@@ -39,6 +39,13 @@ export function isStandaloneMathProblem(text = "") {
   return mathLike || (questionLike && normalized.split(/\s+/).length >= 6 && MATH_NOUN_PATTERN.test(normalized));
 }
 
+export function shouldStartLessonFromComposer({ text = "", hasPlan = false, lessonComplete = false } = {}) {
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+  if (!hasPlan) return isStandaloneMathProblem(normalized);
+  return Boolean(lessonComplete && isStandaloneMathProblem(normalized));
+}
+
 export function buildSuggestedQuestionActions(suggestions = []) {
   return (Array.isArray(suggestions) ? suggestions : [])
     .filter((suggestion) => suggestion?.prompt)

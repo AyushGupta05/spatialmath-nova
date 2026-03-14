@@ -1,16 +1,15 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { converseNovaStream, MODEL_IDS } from "../middleware/bedrock.js";
 import { evaluateBuild } from "../services/buildEvaluator.js";
-import { generateFreeformTutorTurn } from "../services/freeformTutor.js";
+import { generateFreeformTutorTurn, buildFallbackFreeformTurn } from "../services/freeformTutor.js";
 import { evaluateTutorCompletion } from "../services/tutorCompletion.js";
 import { buildTutorSystemPrompt, buildFallbackTutorReply } from "../services/tutorPrompt.js";
-import { resolveModelId } from "../services/modelRouter.js";
+import { converseStreamWithModelFailover } from "../services/modelInvoker.js";
 import { buildTutorResponseMeta } from "../services/tutorMetadata.js";
 import { generateSimilarTutorQuestions } from "../services/tutorSimilar.js";
 
 export function createTutorRoute({
-  streamModel = converseNovaStream,
+  streamModel = converseStreamWithModelFailover,
   freeformTurnGenerator = generateFreeformTutorTurn,
   completionEvaluator = evaluateTutorCompletion,
   similarQuestionGenerator = generateSimilarTutorQuestions,
@@ -33,12 +32,22 @@ export function createTutorRoute({
       }
 
       if (!plan) {
-        const freeformTurn = await freeformTurnGenerator({
-          sceneSnapshot,
-          sceneContext,
-          learningState,
-          userMessage,
-        });
+        let freeformTurn;
+        try {
+          freeformTurn = await freeformTurnGenerator({
+            sceneSnapshot,
+            sceneContext,
+            learningState,
+            userMessage,
+          });
+        } catch (error) {
+          console.error("Tutor freeform error:", error);
+          freeformTurn = buildFallbackFreeformTurn({
+            sceneSnapshot,
+            sceneContext,
+            userMessage,
+          });
+        }
 
         return streamSSE(c, async (stream) => {
           await stream.writeSSE({ data: JSON.stringify({ type: "meta", content: freeformTurn.meta || null }) });
@@ -86,7 +95,7 @@ export function createTutorRoute({
       return streamSSE(c, async (stream) => {
         try {
           await stream.writeSSE({ data: JSON.stringify({ type: "meta", content: responseMeta }) });
-          for await (const chunk of streamModel(resolveModelId("text") || MODEL_IDS.NOVA_LITE, systemPrompt, messages, {
+          for await (const chunk of streamModel("text", systemPrompt, messages, {
             maxTokens: 1024,
             temperature: 0.35,
           })) {

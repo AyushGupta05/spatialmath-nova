@@ -6,6 +6,7 @@ import {
   isStandaloneMathProblem,
   looksLikeShortFollowUp,
   normalizeTutorReplyText,
+  shouldStartLessonFromComposer,
 } from "../src/ui/tutorConversation.js";
 
 test("looksLikeShortFollowUp recognizes short post-solution follow-ups", () => {
@@ -17,6 +18,24 @@ test("looksLikeShortFollowUp recognizes short post-solution follow-ups", () => {
 test("isStandaloneMathProblem distinguishes a fresh math prompt from a follow-up", () => {
   assert.equal(isStandaloneMathProblem("Explain that."), false);
   assert.equal(isStandaloneMathProblem("A line passes through A(1, 2, -1) with direction vector (2, -1, 3). Find the acute angle between the line and the plane 2x - y + 2z = 7."), true);
+});
+
+test("shouldStartLessonFromComposer bootstraps a lesson on the first lower-chat math prompt", () => {
+  assert.equal(shouldStartLessonFromComposer({
+    text: "Find the volume of a cylinder with radius 3 and height 7.",
+    hasPlan: false,
+    lessonComplete: false,
+  }), true);
+  assert.equal(shouldStartLessonFromComposer({
+    text: "show me something cool",
+    hasPlan: false,
+    lessonComplete: false,
+  }), false);
+  assert.equal(shouldStartLessonFromComposer({
+    text: "Find the angle between the line and the plane.",
+    hasPlan: true,
+    lessonComplete: false,
+  }), false);
 });
 
 test("buildSuggestedQuestionActions converts similar prompts into lesson-start actions", () => {

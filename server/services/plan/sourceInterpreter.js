@@ -1,8 +1,7 @@
-import { converseNova, MODEL_IDS } from "../../middleware/bedrock.js";
 import { SOURCE_SUMMARY_PROMPT } from "./prompts.js";
 import { heuristicSourceSummary } from "./heuristics.js";
 import { cleanupJson } from "./shared.js";
-import { resolveModelId } from "../modelRouter.js";
+import { converseWithModelFailover } from "../modelInvoker.js";
 
 export function contentBlocksForSource({ questionText = "", imageAsset = null }) {
   const blocks = [];
@@ -28,7 +27,7 @@ export async function interpretQuestionSource({ questionText = "", imageAsset = 
   }
 
   try {
-    const text = await converseNova(resolveModelId("text") || MODEL_IDS.NOVA_PRO, SOURCE_SUMMARY_PROMPT, [
+    const text = await converseWithModelFailover("text", SOURCE_SUMMARY_PROMPT, [
       {
         role: "user",
         content: contentBlocksForSource({ questionText, imageAsset }),

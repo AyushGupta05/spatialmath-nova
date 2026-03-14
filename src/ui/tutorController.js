@@ -16,8 +16,8 @@ import { MicrophoneCapture } from "./microphoneCapture.js";
 import { extractPastedQuestionImageFile } from "./questionImage.js";
 import {
   buildSuggestedQuestionActions,
-  isStandaloneMathProblem,
   normalizeTutorReplyText,
+  shouldStartLessonFromComposer,
 } from "./tutorConversation.js";
 
 let world = null;
@@ -1148,6 +1148,9 @@ async function handleQuestionSubmit(overrides = {}) {
   const questionText = (overrides.questionText ?? questionInput?.value?.trim()) || "";
   const imageFile = overrides.imageFile ?? questionImageFile;
   if (!questionText && !imageFile) return;
+  if (questionText && questionInput) {
+    questionInput.value = questionText;
+  }
 
   tutorState.reset();
   tutorState.setPhase("parsing");
@@ -1374,7 +1377,11 @@ async function handleComposerSubmit() {
     return;
   }
 
-  if (plan && isLessonComplete() && isStandaloneMathProblem(text)) {
+  if (shouldStartLessonFromComposer({
+    text,
+    hasPlan: Boolean(plan),
+    lessonComplete: isLessonComplete(),
+  })) {
     await handleQuestionSubmit({ questionText: text, imageFile: null });
     return;
   }

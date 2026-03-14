@@ -19,6 +19,8 @@ const DEFAULT_MODELS = {
   ],
 };
 
+const workingModelByKind = new Map();
+
 function uniqueNonEmpty(values = []) {
   return [...new Set(values.filter((value) => typeof value === "string" && value.trim()))];
 }
@@ -31,8 +33,35 @@ export function resolveModelCandidates(kind) {
   return uniqueNonEmpty(DEFAULT_MODELS[kind] || []);
 }
 
+export function rememberWorkingModel(kind, modelId) {
+  const normalizedKind = String(kind || "").trim();
+  const normalizedModelId = String(modelId || "").trim();
+  if (!normalizedKind || !normalizedModelId) return null;
+  workingModelByKind.set(normalizedKind, normalizedModelId);
+  return normalizedModelId;
+}
+
+export function clearWorkingModelCache(kind = null) {
+  if (!kind) {
+    workingModelByKind.clear();
+    return;
+  }
+  workingModelByKind.delete(String(kind || "").trim());
+}
+
+export function getWorkingModelId(kind) {
+  return workingModelByKind.get(String(kind || "").trim()) || null;
+}
+
+export function getModelCandidateOrder(kind) {
+  return uniqueNonEmpty([
+    getWorkingModelId(kind),
+    ...resolveModelCandidates(kind),
+  ]);
+}
+
 export function resolveModelId(kind) {
-  return resolveModelCandidates(kind)[0] || null;
+  return getModelCandidateOrder(kind)[0] || null;
 }
 
 export function getCapabilitySnapshot() {
@@ -46,15 +75,15 @@ export function getCapabilitySnapshot() {
     models: {
       text: {
         preferred: textModel,
-        candidates: resolveModelCandidates("text"),
+        candidates: getModelCandidateOrder("text"),
       },
       voice: {
         preferred: voiceModel,
-        candidates: resolveModelCandidates("voice"),
+        candidates: getModelCandidateOrder("voice"),
       },
       embeddings: {
         preferred: embeddingModel,
-        candidates: resolveModelCandidates("embeddings"),
+        candidates: getModelCandidateOrder("embeddings"),
       },
     },
     inputs: {

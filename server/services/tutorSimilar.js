@@ -2,9 +2,9 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { converseNova, MODEL_IDS } from "../middleware/bedrock.js";
 import { cleanupJson } from "./plan/shared.js";
-import { hasAwsCredentials, resolveModelId } from "./modelRouter.js";
+import { converseWithModelFailover } from "./modelInvoker.js";
+import { hasAwsCredentials } from "./modelRouter.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CHALLENGE_DATA_PATH = join(__dirname, "..", "data", "challenges.json");
@@ -205,8 +205,8 @@ Rules:
 - Do not include solutions.
 - Do not repeat the original problem.`;
 
-  const text = await converseNova(
-    resolveModelId("text") || MODEL_IDS.NOVA_LITE,
+  const text = await converseWithModelFailover(
+    "text",
     systemPrompt,
     [{
       role: "user",

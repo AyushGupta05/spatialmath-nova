@@ -1,10 +1,10 @@
 import { buildSceneSnapshotFromSuggestions } from "../../src/ai/planSchema.js";
 import { computeGeometry } from "../../src/core/geometry.js";
 import { normalizeSceneObject, normalizeSceneSnapshot } from "../../src/scene/schema.js";
-import { converseNova, MODEL_IDS } from "../middleware/bedrock.js";
 import { buildAnalyticPlan } from "./plan/analytic.js";
 import { cleanupJson } from "./plan/shared.js";
-import { hasAwsCredentials, resolveModelId } from "./modelRouter.js";
+import { converseWithModelFailover } from "./modelInvoker.js";
+import { hasAwsCredentials } from "./modelRouter.js";
 
 const FREEFORM_TUTOR_SYSTEM_PROMPT = `You are Nova Prism, a scene-aware chat companion inside a 3D spatial sandbox.
 
@@ -565,9 +565,8 @@ function buildModelMessages(sceneSnapshot = {}, sceneContext = {}, learningState
 async function modelFreeformTurn(sceneSnapshot = {}, sceneContext = {}, learningState = {}, userMessage = "") {
   if (!hasAwsCredentials()) return null;
 
-  const modelId = resolveModelId("text") || MODEL_IDS.NOVA_LITE;
-  const text = await converseNova(
-    modelId,
+  const text = await converseWithModelFailover(
+    "text",
     FREEFORM_TUTOR_SYSTEM_PROMPT,
     buildModelMessages(sceneSnapshot, sceneContext, learningState, userMessage),
     {
@@ -582,6 +581,19 @@ async function modelFreeformTurn(sceneSnapshot = {}, sceneContext = {}, learning
     sceneCommand: shouldAskModelForSceneCommand(userMessage)
       ? normalizeSceneCommand(parsed.sceneCommand)
       : null,
+  };
+}
+
+export function buildFallbackFreeformTurn({
+  sceneSnapshot,
+  sceneContext = null,
+  userMessage = "",
+  sceneCommand = null,
+}) {
+  const normalizedSnapshot = normalizeSceneSnapshot(sceneSnapshot);
+  return {
+    text: freeformFallbackReply(normalizedSnapshot, sceneContext || {}, userMessage, sceneCommand),
+    meta: buildFreeformResponseMeta(normalizedSnapshot, sceneCommand),
   };
 }
 
@@ -610,9 +622,10 @@ export async function generateFreeformTutorTurn({
     };
   } catch (error) {
     console.warn("Freeform tutor fallback:", error?.message || error);
-    return {
-      text: freeformFallbackReply(normalizedSnapshot, sceneContext || {}, userMessage, null),
-      meta: buildFreeformResponseMeta(normalizedSnapshot, null),
-    };
+    return buildFallbackFreeformTurn({
+      sceneSnapshot: normalizedSnapshot,
+      sceneContext,
+      userMessage,
+    });
   }
 }

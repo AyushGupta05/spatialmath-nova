@@ -1,5 +1,5 @@
-import { invokeModelJson } from "../../middleware/bedrock.js";
-import { resolveModelId, hasAwsCredentials } from "../modelRouter.js";
+import { invokeJsonWithModelFailover } from "../modelInvoker.js";
+import { hasAwsCredentials } from "../modelRouter.js";
 
 const EXEMPLARS = [
   {
@@ -89,12 +89,11 @@ function parseEmbeddingResponse(payload = {}) {
 }
 
 async function embedText(text) {
-  const modelId = resolveModelId("embeddings");
-  if (!modelId || !hasAwsCredentials()) return null;
+  if (!hasAwsCredentials()) return null;
   if (embeddingCache.has(text)) return embeddingCache.get(text);
 
   try {
-    const payload = await invokeModelJson(modelId, {
+    const payload = await invokeJsonWithModelFailover("embeddings", {
       schemaVersion: "nova-multimodal-embed-v1",
       taskType: "SINGLE_EMBEDDING",
       singleEmbeddingParams: {
