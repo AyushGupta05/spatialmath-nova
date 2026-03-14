@@ -131,5 +131,5 @@ test("normalizeScenePlan preserves lesson metadata and fills defaults", () => {
   assert.equal(plan.lessonStages[0].checkpointPrompt, "Does this look correct?");
   assert.ok(plan.lessonStages[0].suggestedActions.some((action) => action.kind === "preview-required-object"));
   assert.ok(plan.lessonStages[0].suggestedActions.some((action) => action.kind === "explain-stage"));
-  assert.ok(plan.lessonStages[0].suggestedActions.some((action) => action.kind === "reset-view"));
+  assert.ok(plan.lessonStages[0].suggestedActions.some((action) => action.kind === "continue-stage"));
 });

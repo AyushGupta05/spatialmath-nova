@@ -15,7 +15,7 @@ import {
   formatVector,
   lineSegmentFromPointDirection,
   magnitude,
-  parseParametricLine,
+  parseParametricLines,
   round,
   roundVec,
   scale,
@@ -58,8 +58,7 @@ function closestPointsBetweenLines(p1, v1, p2, v2) {
 }
 
 export function buildSkewLinesDistancePlan(questionText, sourceSummary = {}) {
-  const line1 = parseParametricLine(questionText, "r1");
-  const line2 = parseParametricLine(questionText, "r2");
+  const [line1, line2] = parseParametricLines(questionText);
   if (!line1 || !line2) return null;
 
   const crossProduct = cross(line1.direction, line2.direction);
@@ -95,7 +94,7 @@ export function buildSkewLinesDistancePlan(questionText, sourceSummary = {}) {
       roles: ["primary", "line"],
       object: {
         id: "line-one",
-        label: "r1",
+        label: line1.label || "r1",
         shape: "line",
         color: "#48c9ff",
         position: [0, 0, 0],
@@ -113,7 +112,7 @@ export function buildSkewLinesDistancePlan(questionText, sourceSummary = {}) {
       roles: ["primary", "line"],
       object: {
         id: "line-two",
-        label: "r2",
+        label: line2.label || "r2",
         shape: "line",
         color: "#ff7ca8",
         position: [0, 0, 0],
@@ -180,8 +179,8 @@ export function buildSkewLinesDistancePlan(questionText, sourceSummary = {}) {
 
   const sceneOverlays = [
     { id: "analytic-axes", type: "coordinate-frame", bounds },
-    { id: "line-one-label", type: "object-label", targetObjectId: "line-one", text: `r1: ${formatLineEquation(line1.point, line1.direction, "t")}`, offset: [0.3, 0.45, 0.25], style: "name" },
-    { id: "line-two-label", type: "object-label", targetObjectId: "line-two", text: `r2: ${formatLineEquation(line2.point, line2.direction, "s")}`, offset: [0.3, 0.45, 0.25], style: "name" },
+    { id: "line-one-label", type: "object-label", targetObjectId: "line-one", text: `${line1.label || "r1"}: ${formatLineEquation(line1.point, line1.direction, line1.parameter || "t")}`, offset: [0.3, 0.45, 0.25], style: "name" },
+    { id: "line-two-label", type: "object-label", targetObjectId: "line-two", text: `${line2.label || "r2"}: ${formatLineEquation(line2.point, line2.direction, line2.parameter || "s")}`, offset: [0.3, 0.45, 0.25], style: "name" },
     { id: "cross-pointer", type: "arrow", origin: roundVec(add(closest.point1, [1.8, 1.3, 1.4]), 4), target: roundVec(closest.point1, 4), text: "The shortest segment is perpendicular to both skew lines", style: "annotation", color: "#ffd966" },
     { id: "distance-label", type: "text", position: roundVec(add(scale(add(closest.point1, closest.point2), 0.5), [0.3, 0.5, 0.3]), 4), text: `Distance = ${formatNumber(distanceValue, 4)}`, style: "formula" },
   ];
@@ -242,8 +241,8 @@ export function buildSkewLinesDistancePlan(questionText, sourceSummary = {}) {
           { id: "closest-point-two", label: "B", coordinates: roundVec(closest.point2, 4) },
         ],
         lines: [
-          { id: "line-one", label: "r1", point: roundVec(line1.point, 4), direction: roundVec(line1.direction, 4) },
-          { id: "line-two", label: "r2", point: roundVec(line2.point, 4), direction: roundVec(line2.direction, 4) },
+          { id: "line-one", label: line1.label || "r1", point: roundVec(line1.point, 4), direction: roundVec(line1.direction, 4) },
+          { id: "line-two", label: line2.label || "r2", point: roundVec(line2.point, 4), direction: roundVec(line2.direction, 4) },
         ],
         planes: [],
       },
@@ -258,7 +257,7 @@ export function buildSkewLinesDistancePlan(questionText, sourceSummary = {}) {
       formulaCard: {
         title: "Shortest Distance Between Skew Lines",
         formula: "distance = |(p2 - p1) · (v1 x v2)| / |v1 x v2|",
-        explanation: "The cross product gives a direction perpendicular to both lines. Projecting the separation vector onto that direction isolates the minimum gap.",
+        explanation: "Visually, v1 x v2 points in the only direction perpendicular to both lines. Projecting the separation vector onto that direction measures just the gap between the lines, not any sliding along them.",
       },
       solutionSteps,
     },

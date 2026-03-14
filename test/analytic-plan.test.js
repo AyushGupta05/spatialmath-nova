@@ -8,6 +8,8 @@ const linePlaneIntersectionNaturalPrompt = "A line passes through the point (1, 
 const linePlaneAnglePrompt = "A line has direction vector (3, -2, 1) and a plane has equation 2x + y - 2z = 6. Find the angle between the line and the plane.";
 const linePlaneAngleVariantPrompt = "Find the angle between a line with direction vector (3, -2, 1) and a plane given by 2x + y - 2z = 6.";
 const skewLinesPrompt = "Two lines in space are given by r1 = (1,2,0) + t(2,-1,3), r2 = (4,-1,2) + s(1,2,-1). Find the shortest distance between the two skew lines.";
+const skewLinesUnicodePrompt = "Two lines in space are given by r₁ = (1, 2, 0) + t(2, -1, 3), r₂ = (4, -1, 2) + s(1, 2, -1). Find the shortest distance between the two skew lines.";
+const skewLinesUnlabeledPrompt = "Two lines in space are given by (1,2,0) + t(2,-1,3) and (4,-1,2) + s(1,2,-1). Find the shortest distance between the two skew lines.";
 
 test("detectAnalyticSubtype recognizes supported analytic prompts", () => {
   assert.equal(detectAnalyticSubtype(linePlaneIntersectionPrompt), "line_plane_intersection");
@@ -15,6 +17,8 @@ test("detectAnalyticSubtype recognizes supported analytic prompts", () => {
   assert.equal(detectAnalyticSubtype(linePlaneAnglePrompt), "line_plane_angle");
   assert.equal(detectAnalyticSubtype(linePlaneAngleVariantPrompt), "line_plane_angle");
   assert.equal(detectAnalyticSubtype(skewLinesPrompt), "skew_lines_distance");
+  assert.equal(detectAnalyticSubtype(skewLinesUnicodePrompt), "skew_lines_distance");
+  assert.equal(detectAnalyticSubtype(skewLinesUnlabeledPrompt), "skew_lines_distance");
 });
 
 test("buildAnalyticPlan creates an auto-rendered line-plane intersection lesson", () => {
@@ -86,4 +90,15 @@ test("buildAnalyticPlan creates a skew-lines lesson with the shortest segment", 
   assert.equal(plan.answerScaffold.formula, "distance = |(p2 - p1) · (v1 x v2)| / |v1 x v2|");
   assert.ok(Number(plan.analyticContext?.derivedValues?.distance) > 2.3);
   assert.ok(Number(plan.analyticContext?.derivedValues?.distance) < 2.31);
+});
+
+test("buildAnalyticPlan accepts worksheet-style skew-lines prompts with unicode subscripts", () => {
+  const plan = buildAnalyticPlan(skewLinesUnicodePrompt, {
+    cleanedQuestion: skewLinesUnicodePrompt,
+    inputMode: "text",
+  });
+
+  assert.ok(plan);
+  assert.equal(plan.analyticContext?.subtype, "skew_lines_distance");
+  assert.equal(plan.sceneMoments[0].visibleObjectIds.length, 2);
 });

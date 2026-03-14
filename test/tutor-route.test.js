@@ -91,9 +91,9 @@ function buildAnalyticPlan() {
       tutorIntro: "Rotate the scene.",
       highlightTargets: ["line-main"],
       suggestedActions: [{
-        id: "observe-highlight",
-        label: "Highlight Key Idea",
-        kind: "highlight-key-idea",
+        id: "observe-formula",
+        label: "Show Formula",
+        kind: "show-formula",
       }],
     }],
     cameraBookmarks: [{
@@ -160,7 +160,7 @@ test("POST /api/tutor streams lesson metadata before tutor text", async () => {
   assert.equal(meta.stageStatus.currentStageId, "step-1");
   assert.equal(meta.stageStatus.canAdvance, false);
   assert.ok(meta.actions.some((action) => action.kind === "explain-stage"));
-  assert.ok(meta.actions.some((action) => action.kind === "reset-view"));
+  assert.ok(meta.actions.some((action) => action.kind === "continue-stage"));
   assert.deepEqual(meta.focusTargets, ["primary-cylinder"]);
   assert.match(meta.systemContextMessage, /Givens: radius = 3, height = 7\./);
   assert.equal(text, "Let's start.");
@@ -195,6 +195,6 @@ test("POST /api/tutor includes scene directives for analytic lessons", async () 
   assert.equal(meta.sceneDirective.stageId, "observe");
   assert.equal(meta.sceneDirective.cameraBookmarkId, "overview");
   assert.deepEqual(meta.sceneDirective.visibleOverlayIds, ["analytic-axes"]);
-  assert.ok(meta.actions.some((action) => action.kind === "highlight-key-idea"));
   assert.ok(meta.actions.some((action) => action.kind === "show-formula"));
+  assert.ok(meta.actions.some((action) => action.kind === "reveal-full-solution"));
 });

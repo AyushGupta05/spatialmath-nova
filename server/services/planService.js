@@ -10,7 +10,19 @@ import { buildAnalyticPlan } from "./plan/analytic.js";
 export function buildAnalyticPlannerInput({ questionText = "", sourceSummary = {} }) {
   const rawQuestion = String(questionText || sourceSummary.rawQuestion || "").trim();
   const cleanedQuestion = String(sourceSummary.cleanedQuestion || "").trim();
-  const analyticQuestion = rawQuestion || cleanedQuestion;
+  const givens = Array.isArray(sourceSummary.givens)
+    ? sourceSummary.givens.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  const relationships = Array.isArray(sourceSummary.relationships)
+    ? sourceSummary.relationships.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  const diagramSummary = String(sourceSummary.diagramSummary || "").trim();
+  const analyticQuestion = rawQuestion || [
+    cleanedQuestion,
+    ...givens,
+    diagramSummary,
+    ...relationships,
+  ].filter(Boolean).join(". ");
 
   if (!analyticQuestion) {
     return {

@@ -29,6 +29,7 @@ let lastCheckpointKey = null;
 let analyticOverlayManager = null;
 let analyticFormulaVisible = false;
 let analyticFullSolutionVisible = false;
+let analyticFormulaDismissed = false;
 
 let questionSection;
 let questionInput;
@@ -65,6 +66,7 @@ let formulaCardTitle;
 let formulaCardEquation;
 let formulaCardExplanation;
 let formulaCardRevealBtn;
+let formulaCardCloseBtn;
 let solutionDrawer;
 let solutionDrawerTitle;
 let solutionDrawerSteps;
@@ -78,6 +80,17 @@ function formatNumber(value, digits = 2) {
 
 function formatKilobytes(bytes) {
   return `${formatNumber(Number(bytes) / 1024, 0)} KB`;
+}
+
+function withFollowUp(text = "") {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) {
+    return "Feel free to ask any questions.";
+  }
+  if (/feel free to ask any questions\.?$/i.test(trimmed)) {
+    return trimmed;
+  }
+  return `${trimmed} Feel free to ask any questions.`;
 }
 
 function activePlan() {
@@ -395,12 +408,6 @@ function stageActionsForClient(plan = activePlan(), assessment = tutorState.late
     kind: "continue-stage",
     payload: { stageId: stage?.id || null },
   };
-  const resetAction = {
-    id: `${stage?.id || learningStage}-reset`,
-    label: "Reset View",
-    kind: "reset-view",
-    payload: { stageId: stage?.id || null },
-  };
   const previewAction = fillPreviewActionObjectSpec(
     stage?.suggestedActions?.find((action) => action.kind === "preview-required-object")
       || {
@@ -422,8 +429,8 @@ function stageActionsForClient(plan = activePlan(), assessment = tutorState.late
   if (previewAction?.payload?.objectSpec) {
     actions.push(previewAction);
   }
-  actions.push(defaultExplain, continueAction, resetAction);
-  return actions.slice(0, 4);
+  actions.push(defaultExplain, continueAction);
+  return actions.slice(0, 3);
 }
 
 function buildSystemContextMessage(plan = activePlan()) {
@@ -446,8 +453,7 @@ function buildStageIntroMessage(plan = activePlan(), assessment = tutorState.lat
   const index = currentStageIndex(plan);
 
   if (isAnalyticPlan(plan) && stage) {
-    const stageNumber = index >= 0 ? index + 1 : 1;
-    return `Step ${stageNumber}: ${stage.title}. ${stage.tutorIntro} Goal: ${stage.goal}`.trim();
+    return withFollowUp(stage.tutorIntro || stage.goal || currentSceneMoment(plan)?.prompt || "");
   }
 
   if ((learningStage === "orient" || learningStage === "build") && stage) {
@@ -510,8 +516,13 @@ function setCheckpointState(checkpoint = null) {
 
 function renderAnalyticPanels(plan = activePlan()) {
   const analytic = plan?.analyticContext || null;
-  const showFormulaCard = Boolean(isAnalyticPlan(plan) && analytic && (analyticFormulaVisible || currentSceneMoment(plan)?.revealFormula));
-  const showSolutionDrawer = Boolean(isAnalyticPlan(plan) && analytic && analyticFullSolutionVisible);
+  const showFormulaCard = Boolean(
+    isAnalyticPlan(plan)
+    && analytic
+    && !analyticFormulaDismissed
+    && (analyticFormulaVisible || currentSceneMoment(plan)?.revealFormula || analyticFullSolutionVisible)
+  );
+  const showSolutionDrawer = Boolean(isAnalyticPlan(plan) && analytic && !analyticFormulaDismissed && analyticFullSolutionVisible);
 
   formulaCard?.classList.toggle("hidden", !showFormulaCard);
   solutionDrawer?.classList.toggle("hidden", !showSolutionDrawer);
@@ -730,6 +741,10 @@ function applySceneDirective(sceneDirective = null, { forceCamera = false } = {}
 
   if (sceneDirective.revealFormula) {
     analyticFormulaVisible = true;
+    analyticFormulaDismissed = false;
+  }
+  if (sceneDirective.revealFullSolution) {
+    analyticFormulaDismissed = false;
   }
   renderAnalyticPanels(plan);
   renderAnnotations();
@@ -845,6 +860,7 @@ function setPlan(plan, options = {}) {
   lastCheckpointKey = null;
   analyticFormulaVisible = false;
   analyticFullSolutionVisible = false;
+  analyticFormulaDismissed = false;
   tutorState.setPlan(normalizedPlan, { mode: options.mode || normalizedPlan.problem?.mode || "guided" });
   tutorState.setPhase(isAnalyticPlan(normalizedPlan) ? "guided_build" : "plan_ready");
   tutorState.setLearningStage(isAnalyticPlan(normalizedPlan) ? "build" : "orient");
@@ -888,6 +904,7 @@ async function handleQuestionSubmit(overrides = {}) {
   tutorState.setPhase("parsing");
   analyticFormulaVisible = false;
   analyticFullSolutionVisible = false;
+  analyticFormulaDismissed = false;
   analyticOverlayManager?.clear();
   renderAnalyticPanels(null);
   if (questionSubmit) questionSubmit.disabled = true;
@@ -1257,12 +1274,21 @@ async function handleTutorAction(action = {}) {
   switch (action.kind) {
     case "highlight-key-idea":
       applyAnalyticSceneState({ forceCamera: true });
-      addTranscriptMessage("system", currentSceneMoment(plan)?.goal || "Highlighted the current idea in the scene.");
+      addTranscriptMessage("system", withFollowUp(currentSceneMoment(plan)?.goal || "Highlighted the current idea in the scene."));
       break;
     case "show-formula":
       analyticFormulaVisible = true;
+      analyticFormulaDismissed = false;
       renderAnalyticPanels(plan);
-      addTranscriptMessage("system", plan.analyticContext?.formulaCard?.formula || plan.answerScaffold?.formula || "Relevant formula revealed.");
+      addTranscriptMessage(
+        "system",
+        withFollowUp(
+          [
+            plan.analyticContext?.formulaCard?.formula || plan.answerScaffold?.formula || "Relevant formula revealed.",
+            plan.analyticContext?.formulaCard?.explanation || plan.answerScaffold?.explanation || "",
+          ].filter(Boolean).join(" ")
+        )
+      );
       break;
     case "reveal-next-step":
       advanceLessonStage();
@@ -1270,12 +1296,13 @@ async function handleTutorAction(action = {}) {
     case "reveal-full-solution":
       analyticFormulaVisible = true;
       analyticFullSolutionVisible = true;
+      analyticFormulaDismissed = false;
       if (isAnalyticPlan(plan) && tutorState.currentStep < plan.lessonStages.length - 1) {
         tutorState.goToStep(plan.lessonStages.length - 1);
       }
       applyAnalyticSceneState({ forceCamera: true });
       renderAnalyticPanels(plan);
-      addTranscriptMessage("system", "Full worked solution revealed.");
+      addTranscriptMessage("system", withFollowUp("Full worked solution revealed."));
       break;
     case "reset-view":
       applyAnalyticSceneState({ forceCamera: true });
@@ -1459,6 +1486,12 @@ function bindEvents() {
       kind: "reveal-full-solution",
     });
   });
+  formulaCardCloseBtn?.addEventListener("click", () => {
+    analyticFormulaVisible = false;
+    analyticFullSolutionVisible = false;
+    analyticFormulaDismissed = true;
+    renderAnalyticPanels(activePlan());
+  });
   solutionDrawerClose?.addEventListener("click", () => {
     analyticFullSolutionVisible = false;
     renderAnalyticPanels(activePlan());
@@ -1501,6 +1534,7 @@ function bindDom() {
   formulaCardEquation = document.getElementById("formulaCardEquation");
   formulaCardExplanation = document.getElementById("formulaCardExplanation");
   formulaCardRevealBtn = document.getElementById("formulaCardRevealBtn");
+  formulaCardCloseBtn = document.getElementById("formulaCardCloseBtn");
   solutionDrawer = document.getElementById("solutionDrawer");
   solutionDrawerTitle = document.getElementById("solutionDrawerTitle");
   solutionDrawerSteps = document.getElementById("solutionDrawerSteps");

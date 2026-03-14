@@ -30,12 +30,6 @@ function stageActionsForReply(plan, stage, learningState = {}, assessment = null
     const includeNext = sceneIndex < Math.max(plan.sceneMoments.length - 1, 0);
     const actions = [
       {
-        id: `${stage.id}-highlight`,
-        label: "Highlight Key Idea",
-        kind: "highlight-key-idea",
-        payload: { stageId: stage.id },
-      },
-      {
         id: `${stage.id}-formula`,
         label: "Show Formula",
         kind: "show-formula",
@@ -53,12 +47,6 @@ function stageActionsForReply(plan, stage, learningState = {}, assessment = null
         id: `${stage.id}-solution`,
         label: "Reveal Full Solution",
         kind: "reveal-full-solution",
-        payload: { stageId: stage.id },
-      },
-      {
-        id: `${stage.id}-reset`,
-        label: "Reset View",
-        kind: "reset-view",
         payload: { stageId: stage.id },
       },
     ].filter(Boolean);
@@ -96,15 +84,9 @@ function stageActionsForReply(plan, stage, learningState = {}, assessment = null
       kind: "continue-stage",
       payload: { stageId: stage.id },
     },
-    {
-      id: `${stage.id}-reset`,
-      label: "Reset View",
-      kind: "reset-view",
-      payload: { stageId: stage.id },
-    },
   );
 
-  return actions.slice(0, 4);
+  return actions.slice(0, 3);
 }
 
 function systemContextMessage(plan) {

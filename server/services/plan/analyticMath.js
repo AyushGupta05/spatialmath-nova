@@ -171,18 +171,55 @@ export function parseDirectionVector(questionText = "") {
 
 export function parseParametricLine(questionText = "", label = "r1") {
   const normalized = normalizePromptText(questionText);
-  const pattern = new RegExp(`${label}\\s*=\\s*\\(([^)]+)\\)\\s*\\+\\s*[A-Za-z]\\s*\\(([^)]+)\\)`, "i");
+  const escapedLabel = String(label).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`\\b${escapedLabel}\\s*=\\s*\\(([^)]+)\\)\\s*\\+\\s*([A-Za-z])\\s*\\(([^)]+)\\)`, "i");
   const match = normalized.match(pattern);
-  if (!match) return null;
-  const point = parseVector(match[1]);
-  const direction = parseVector(match[2]);
-  if (!point || !direction) return null;
-  return { point, direction };
+  if (match) {
+    const point = parseVector(match[1]);
+    const direction = parseVector(match[3]);
+    if (point && direction) {
+      return { label, parameter: match[2], point, direction };
+    }
+  }
+
+  const lines = parseParametricLines(questionText);
+  if (!lines.length) return null;
+
+  const labeled = lines.find((line) => String(line.label || "").toLowerCase() === String(label).toLowerCase());
+  if (labeled) return labeled;
+
+  const trailingIndex = String(label).match(/(\d+)$/);
+  if (trailingIndex) {
+    const index = Math.max(0, Number(trailingIndex[1]) - 1);
+    return lines[index] || null;
+  }
+
+  return lines[0] || null;
+}
+
+export function parseParametricLines(questionText = "") {
+  const normalized = normalizePromptText(questionText);
+  const pattern = /(?:\b([A-Za-z][A-Za-z0-9]*)\s*=\s*)?\(([^)]+)\)\s*\+\s*([A-Za-z])\s*\(([^)]+)\)/gi;
+  const lines = [];
+
+  for (const match of normalized.matchAll(pattern)) {
+    const point = parseVector(match[2]);
+    const direction = parseVector(match[4]);
+    if (!point || !direction) continue;
+    lines.push({
+      label: match[1] || `r${lines.length + 1}`,
+      parameter: match[3],
+      point,
+      direction,
+    });
+  }
+
+  return lines;
 }
 
 export function analyticSubtypeForQuestion(questionText = "") {
   const normalized = normalizePromptText(questionText).toLowerCase();
-  if (/shortest distance/.test(normalized) && /r1\s*=/.test(normalized) && /r2\s*=/.test(normalized)) {
+  if (/shortest distance/.test(normalized) && parseParametricLines(questionText).length >= 2) {
     return "skew_lines_distance";
   }
   if (
@@ -335,12 +372,6 @@ export function buildAnalyticMoments(momentSpecs = []) {
 export function buildCommonAnalyticActions(includeNext = true) {
   const actions = [
     {
-      id: "analytic-highlight",
-      label: "Highlight Key Idea",
-      kind: "highlight-key-idea",
-      payload: {},
-    },
-    {
       id: "analytic-formula",
       label: "Show Formula",
       kind: "show-formula",
@@ -359,12 +390,6 @@ export function buildCommonAnalyticActions(includeNext = true) {
     id: "analytic-solution",
     label: "Reveal Full Solution",
     kind: "reveal-full-solution",
-    payload: {},
-  });
-  actions.push({
-    id: "analytic-reset",
-    label: "Reset View",
-    kind: "reset-view",
     payload: {},
   });
   return actions;

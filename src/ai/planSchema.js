@@ -183,15 +183,9 @@ function stageActionsForStep(step, suggestionsById, stageIndex = 0) {
       kind: "continue-stage",
       payload: { stageId: step.id },
     }),
-    normalizeTutorAction({
-      id: `${step.id}-reset`,
-      label: "Reset View",
-      kind: "reset-view",
-      payload: { stageId: step.id },
-    }),
   );
 
-  return actions.slice(0, 4);
+  return actions.slice(0, 3);
 }
 
 function normalizeLessonStageEntry(stage = {}, index = 0, context = {}) {

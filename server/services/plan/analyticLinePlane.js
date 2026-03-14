@@ -292,7 +292,7 @@ export function buildLinePlaneIntersectionPlan(questionText, sourceSummary = {})
       formulaCard: {
         title: "Line-Plane Intersection",
         formula: `n · (${formatVector(line.point)} + t${formatVector(line.direction)}) = ${formatNumber(plane.constant)}`,
-        explanation: "Substitute the line coordinates into the plane equation, solve for t, then evaluate the point on the line.",
+        explanation: "Visually, this tracks the moving point on the line until it lands on the plane. The value of t picks the exact spot where the line finally satisfies the plane equation.",
       },
       solutionSteps,
     },
@@ -439,7 +439,7 @@ export function buildLinePlaneAnglePlan(questionText, sourceSummary = {}) {
       formulaCard: {
         title: "Angle Between a Line and a Plane",
         formula: "sin(theta) = |d · n| / (|d||n|)",
-        explanation: "The plane normal comes from the plane equation. The line-plane angle is the acute complement of the line-normal angle.",
+        explanation: "Visually, the normal gives the plane a direction to compare against the line. The dot product measures that alignment, then the acute complement gives the angle to the plane itself.",
       },
       solutionSteps,
     },

@@ -34,3 +34,21 @@ test("buildAnalyticPlannerInput keeps interpreted text when no raw question is a
   assert.equal(analyticInput.questionText, sourceSummary.cleanedQuestion);
   assert.equal(analyticInput.sourceSummary.cleanedQuestion, sourceSummary.cleanedQuestion);
 });
+
+test("buildAnalyticPlannerInput includes givens when reconstructed analytic text is needed", () => {
+  const sourceSummary = {
+    inputMode: "image",
+    cleanedQuestion: "Find the shortest distance between the two skew lines.",
+    givens: [
+      "r1 = (1, 2, 0) + t(2, -1, 3)",
+      "r2 = (4, -1, 2) + s(1, 2, -1)",
+    ],
+  };
+
+  const analyticInput = buildAnalyticPlannerInput({ questionText: "", sourceSummary });
+
+  assert.match(analyticInput.questionText, /shortest distance between the two skew lines/i);
+  assert.match(analyticInput.questionText, /r1 = \(1, 2, 0\) \+ t\(2, -1, 3\)/i);
+  assert.match(analyticInput.questionText, /r2 = \(4, -1, 2\) \+ s\(1, 2, -1\)/i);
+  assert.equal(analyticInput.sourceSummary.cleanedQuestion, sourceSummary.cleanedQuestion);
+});
