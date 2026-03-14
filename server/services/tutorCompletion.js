@@ -46,9 +46,10 @@ export function evaluateTutorCompletion({ plan, userMessage }) {
 
   if (Array.isArray(finalAnswer)) {
     const actualTuple = extractTuple(normalizedMessage) || extractNumbers(normalizedMessage);
+    const complete = compareTuple(finalAnswer.map(Number), actualTuple, 0.02);
     return {
-      complete: compareTuple(finalAnswer.map(Number), actualTuple, 0.02),
-      reason: compareTuple(finalAnswer.map(Number), actualTuple, 0.02) ? "correct-answer" : null,
+      complete,
+      reason: complete ? "correct-answer" : null,
     };
   }
 

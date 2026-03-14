@@ -35,6 +35,9 @@ function buildPlan() {
       suggestedObjectIds: ["primary-object"],
       requiredObjectIds: ["primary-object"],
     }],
+    answerScaffold: {
+      finalAnswer: "21",
+    },
   });
 }
 
@@ -167,6 +170,34 @@ test("POST /api/tutor streams lesson metadata before tutor text", async () => {
   assert.ok(assessment.summary);
 });
 
+test("POST /api/tutor includes deterministic completion metadata for correct answers", async () => {
+  const plan = buildPlan();
+  const tutorRoute = createTutorRoute({
+    streamModel: async function* streamTutor() {
+      yield "Correct.";
+    },
+  });
+
+  const response = await tutorRoute.request("/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      plan,
+      sceneSnapshot: { objects: [], selectedObjectId: null },
+      learningState: { currentStep: 0, learningStage: "orient", history: [] },
+      userMessage: "21",
+      contextStepId: "step-1",
+    }),
+  });
+
+  const payloads = parseSsePayloads(await response.text());
+  const meta = payloads.find((entry) => entry.type === "meta")?.content;
+
+  assert.deepEqual(meta?.completionState, { complete: true, reason: "correct-answer" });
+  assert.equal(meta?.checkpoint, null);
+  assert.equal(meta?.stageStatus?.canAdvance, false);
+});
+
 test("POST /api/tutor includes scene directives for analytic lessons", async () => {
   const plan = buildAnalyticPlan();
   const tutorRoute = createTutorRoute({
@@ -224,4 +255,28 @@ test("POST /api/tutor supports freeform scene chat without a lesson plan", async
   assert.ok(meta.sceneCommand.operations[0].objects.length > 0);
   assert.equal(payloads.some((entry) => entry.type === "assessment"), false);
   assert.match(text, /scene|line|point|angle|connector/i);
+});
+
+test("POST /api/tutor/similar returns similar question suggestions", async () => {
+  const tutorRoute = createTutorRoute({
+    similarQuestionGenerator: async () => ([
+      { label: "One", prompt: "Question one", source: "template" },
+      { label: "Two", prompt: "Question two", source: "template" },
+      { label: "Three", prompt: "Question three", source: "template" },
+    ]),
+  });
+
+  const response = await tutorRoute.request("/similar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      plan: buildAnalyticPlan(),
+      limit: 3,
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.suggestions.length, 3);
+  assert.deepEqual(payload.suggestions.map((item) => item.label), ["One", "Two", "Three"]);
 });

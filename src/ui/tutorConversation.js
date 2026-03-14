@@ -32,7 +32,9 @@ export function isStandaloneMathProblem(text = "") {
 }
 
 export function buildSuggestedQuestionActions(suggestions = []) {
-  return (Array.isArray(suggestions) ? suggestions : []).map((suggestion, index) => ({
+  return (Array.isArray(suggestions) ? suggestions : [])
+    .filter((suggestion) => suggestion?.prompt)
+    .map((suggestion, index) => ({
     id: `suggested-question-${index + 1}`,
     label: suggestion.label || `Similar Question ${index + 1}`,
     kind: "start-suggested-question",
@@ -40,5 +42,5 @@ export function buildSuggestedQuestionActions(suggestions = []) {
       prompt: suggestion.prompt,
       source: suggestion.source || "template",
     },
-  }));
+    }));
 }

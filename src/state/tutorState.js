@@ -68,6 +68,8 @@ export class TutorState extends EventTarget {
     return {
       ...this._state,
       history: [...this._state.history],
+      completionState: { ...this._state.completionState },
+      similarQuestions: [...this._state.similarQuestions],
     };
   }
 

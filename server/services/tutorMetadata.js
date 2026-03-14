@@ -119,7 +119,7 @@ export function buildTutorResponseMeta({
         .filter(Boolean);
 
   return {
-    actions: stageActionsForReply(plan, stage, learningState, assessment),
+    actions: completionState?.complete ? [] : stageActionsForReply(plan, stage, learningState, assessment),
     focusTargets,
     checkpoint: completionState?.complete
       ? null

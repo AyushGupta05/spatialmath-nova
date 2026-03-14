@@ -97,6 +97,34 @@ const QUESTION_TYPE_TEMPLATES = {
       prompt: "Which has a greater volume: a cuboid with dimensions 4, 5, and 7, or a cylinder with radius 3 and height 10? By how much? Round to two decimal places.",
     },
   ],
+  spatial: [
+    {
+      label: "3D Coordinate Practice",
+      prompt: "In three-dimensional space, points A(1, 2, 3) and B(4, -1, 5) are given. Find the midpoint of AB and the distance between the two points.",
+    },
+    {
+      label: "Vector Geometry",
+      prompt: "A line passes through P(2, -1, 4) with direction vector (1, 2, -2). Find a second point on the line and explain how the direction vector controls its path.",
+    },
+    {
+      label: "Plane and Point",
+      prompt: "A plane has equation x + 2y - z = 6 and a point A(2, 1, 0). Determine whether the point lies on the plane and justify your answer.",
+    },
+  ],
+  composite: [
+    {
+      label: "Composite Volume",
+      prompt: "A hemisphere of radius 3 sits on top of a cylinder of radius 3 and height 5. Find the total volume. Round to two decimal places.",
+    },
+    {
+      label: "Layered Solid",
+      prompt: "A cone of radius 4 and height 6 sits on top of a cylinder of radius 4 and height 8. Find the total volume. Round to two decimal places.",
+    },
+    {
+      label: "Two-Part Solid",
+      prompt: "A sphere of radius 2 is attached to the top of a cube of side 4. Find the combined volume. Round to two decimal places.",
+    },
+  ],
 };
 
 let cachedChallenges = null;
@@ -154,7 +182,7 @@ async function loadChallenges() {
 function deterministicSuggestions(plan, limit = 3) {
   const subtype = plan?.analyticContext?.subtype || "";
   const questionType = plan?.problem?.questionType || "";
-  const source = ANALYTIC_TEMPLATES[subtype] || QUESTION_TYPE_TEMPLATES[questionType] || [];
+  const source = ANALYTIC_TEMPLATES[subtype] || QUESTION_TYPE_TEMPLATES[questionType] || QUESTION_TYPE_TEMPLATES.spatial || [];
   return source.slice(0, limit).map((item) => ({ ...item, source: "template" }));
 }
 
@@ -228,7 +256,7 @@ export async function generateSimilarTutorQuestions({
   challengeBank = null,
   aiSuggestionGenerator = generateAiSuggestions,
 } = {}) {
-  const finalLimit = 3;
+  const finalLimit = Math.min(3, Math.max(3, Number(limit) || 3));
   const keywords = conceptKeywords(plan);
   const challenges = challengeBank || await loadChallenges();
   const closeChallenges = rankChallengeMatches(plan, challenges)

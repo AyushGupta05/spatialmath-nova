@@ -113,7 +113,7 @@ function suggestionActions() {
 
 function completionPromptKey(plan = activePlan(), suggestions = tutorState.similarQuestions || []) {
   if (!plan) return "";
-  return `${plan.problem?.id || "plan"}:${suggestions.map((item) => item.prompt).join("|")}`;
+  return `${plan.problem?.id || "plan"}:${plan.problem?.question || ""}:${suggestions.map((item) => item.prompt).join("|")}`;
 }
 
 function currentSnapshot() {
@@ -563,6 +563,7 @@ function announceCompletionOptions() {
 
 async function fetchSimilarQuestionsOnce() {
   const plan = activePlan();
+  const requestedPlanKey = completionPromptKey(plan, []);
   if (!plan || !isLessonComplete()) return;
   if (tutorState.similarQuestions?.length) {
     announceCompletionOptions();
@@ -575,6 +576,7 @@ async function fetchSimilarQuestionsOnce() {
 
   similarQuestionRequest = requestSimilarTutorQuestions({ plan, limit: 3 })
     .then((payload) => {
+      if (completionPromptKey(activePlan(), []) !== requestedPlanKey) return;
       tutorState.setSimilarQuestions(payload?.suggestions || []);
       announceCompletionOptions();
     })
@@ -772,14 +774,6 @@ function renderSceneInfo() {
 
 function renderAssessment(assessment) {
   if (!sceneValidation) return;
-  if (!assessment) {
-    if (!activePlan()) {
-      sceneValidation.innerHTML = `<p class="muted-text">Nova can chat about anything, inspect the current scene, and build a fresh math visual when you ask.</p>`;
-      return;
-    }
-    sceneValidation.innerHTML = `<p class="muted-text">The tutor will inspect the scene and highlight the next useful idea.</p>`;
-    return;
-  }
 
   if (isLessonComplete()) {
     sceneValidation.innerHTML = `
@@ -787,6 +781,15 @@ function renderAssessment(assessment) {
       <div class="validation-stat"><strong>Next move</strong><br />Ask a follow-up or try a similar question.</div>
       <div class="validation-stat"><strong>Answer</strong><br />${escapeHtml(activePlan()?.answerScaffold?.finalAnswer || "Shown in the lesson")}</div>
     `;
+    return;
+  }
+
+  if (!assessment) {
+    if (!activePlan()) {
+      sceneValidation.innerHTML = `<p class="muted-text">Nova can chat about anything, inspect the current scene, and build a fresh math visual when you ask.</p>`;
+      return;
+    }
+    sceneValidation.innerHTML = `<p class="muted-text">The tutor will inspect the scene and highlight the next useful idea.</p>`;
     return;
   }
 
