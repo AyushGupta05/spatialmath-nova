@@ -3,11 +3,18 @@ import { streamSSE } from "hono/streaming";
 import { converseNovaStream, MODEL_IDS } from "../middleware/bedrock.js";
 import { evaluateBuild } from "../services/buildEvaluator.js";
 import { generateFreeformTutorTurn } from "../services/freeformTutor.js";
+import { evaluateTutorCompletion } from "../services/tutorCompletion.js";
 import { buildTutorSystemPrompt, buildFallbackTutorReply } from "../services/tutorPrompt.js";
 import { resolveModelId } from "../services/modelRouter.js";
 import { buildTutorResponseMeta } from "../services/tutorMetadata.js";
+import { generateSimilarTutorQuestions } from "../services/tutorSimilar.js";
 
-export function createTutorRoute({ streamModel = converseNovaStream, freeformTurnGenerator = generateFreeformTutorTurn } = {}) {
+export function createTutorRoute({
+  streamModel = converseNovaStream,
+  freeformTurnGenerator = generateFreeformTutorTurn,
+  completionEvaluator = evaluateTutorCompletion,
+  similarQuestionGenerator = generateSimilarTutorQuestions,
+} = {}) {
   const tutorRoute = new Hono();
 
   tutorRoute.post("/", async (c) => {
@@ -41,11 +48,13 @@ export function createTutorRoute({ streamModel = converseNovaStream, freeformTur
       }
 
       const assessment = evaluateBuild(plan, sceneSnapshot, contextStepId);
+      const completionState = completionEvaluator({ plan, userMessage });
       const responseMeta = buildTutorResponseMeta({
         plan,
         learningState,
         contextStepId,
         assessment,
+        completionState,
       });
       const systemPrompt = buildTutorSystemPrompt({
         plan,
@@ -102,6 +111,24 @@ export function createTutorRoute({ streamModel = converseNovaStream, freeformTur
       });
     } catch (error) {
       console.error("Tutor route error:", error);
+      return c.json({ error: error.message || "Internal server error" }, 500);
+    }
+  });
+
+  tutorRoute.post("/similar", async (c) => {
+    try {
+      const { plan, limit = 3 } = await c.req.json();
+      if (!plan) {
+        return c.json({ error: "plan is required" }, 400);
+      }
+
+      const suggestions = await similarQuestionGenerator({
+        plan,
+        limit,
+      });
+      return c.json({ suggestions: suggestions.slice(0, 3) });
+    } catch (error) {
+      console.error("Tutor similar route error:", error);
       return c.json({ error: error.message || "Internal server error" }, 500);
     }
   });

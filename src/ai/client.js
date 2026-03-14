@@ -100,6 +100,15 @@ export async function askTutor({ plan, sceneSnapshot, sceneContext = null, learn
   return { text: fullText, assessment: latestAssessment, ...latestMeta };
 }
 
+export async function requestSimilarTutorQuestions({ plan, limit = 3 }) {
+  const response = await fetch(`${API_BASE}/tutor/similar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plan, limit }),
+  });
+  return readJsonOrError(response, "Failed to load similar tutor questions");
+}
+
 export async function requestVoiceResponse(input, playbackMode = "auto") {
   const payload = typeof input === "string"
     ? { text: input, playbackMode, mode: "narrate" }

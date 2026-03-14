@@ -7,6 +7,7 @@ const linePlaneIntersectionPrompt = "A line passes through the point P(1, -2, 3)
 const linePlaneIntersectionNaturalPrompt = "A line passes through the point (1, -2, 3) and moves in the direction of the vector (2, 1, -1). There is a plane in space whose equation is 2x - y + z = 7. Find the coordinates of the point where the line intersects the plane.";
 const linePlaneAnglePrompt = "A line has direction vector (3, -2, 1) and a plane has equation 2x + y - 2z = 6. Find the angle between the line and the plane.";
 const linePlaneAngleVariantPrompt = "Find the angle between a line with direction vector (3, -2, 1) and a plane given by 2x + y - 2z = 6.";
+const linePlaneAngleAnchoredPrompt = "In three-dimensional space, a line L passes through the point A(1, 2, -1) and has direction vector d = (2, -1, 3). A plane P has equation 2x - y + 2z = 7. Find the acute angle between the line L and the plane P.";
 const skewLinesPrompt = "Two lines in space are given by r1 = (1,2,0) + t(2,-1,3), r2 = (4,-1,2) + s(1,2,-1). Find the shortest distance between the two skew lines.";
 const skewLinesUnicodePrompt = "Two lines in space are given by r₁ = (1, 2, 0) + t(2, -1, 3), r₂ = (4, -1, 2) + s(1, 2, -1). Find the shortest distance between the two skew lines.";
 const skewLinesUnlabeledPrompt = "Two lines in space are given by (1,2,0) + t(2,-1,3) and (4,-1,2) + s(1,2,-1). Find the shortest distance between the two skew lines.";
@@ -75,6 +76,19 @@ test("buildAnalyticPlan accepts plane-angle wording from the simplified workshee
   assert.equal(plan.experienceMode, "analytic_auto");
   assert.equal(plan.analyticContext?.subtype, "line_plane_angle");
   assert.ok(plan.objectSuggestions.some((item) => item.id === "normal-guide"));
+});
+
+test("buildAnalyticPlan keeps the actual anchor point for line-plane angle scenes", () => {
+  const plan = buildAnalyticPlan(linePlaneAngleAnchoredPrompt, {
+    cleanedQuestion: linePlaneAngleAnchoredPrompt,
+    inputMode: "text",
+  });
+
+  assert.ok(plan);
+  assert.equal(plan.analyticContext?.subtype, "line_plane_angle");
+  assert.deepEqual(plan.analyticContext?.entities?.lines?.[0]?.point, [1, 2, -1]);
+  assert.ok(plan.objectSuggestions.some((item) => item.id === "point-anchor"));
+  assert.ok(plan.sceneMoments[0]?.visibleObjectIds.includes("point-anchor"));
 });
 
 test("buildAnalyticPlan creates a skew-lines lesson with the shortest segment", () => {

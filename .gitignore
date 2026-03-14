@@ -10,3 +10,4 @@ node_modules/
 .playwright-cli/
 output/
 docs/submission/
+.codex-runtime/

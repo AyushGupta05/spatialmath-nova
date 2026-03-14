@@ -104,6 +104,7 @@ export function buildTutorResponseMeta({
   learningState = {},
   contextStepId = null,
   assessment = null,
+  completionState = null,
 }) {
   const plan = normalizeScenePlan(planInput);
   const stage = currentLessonStage(plan, learningState, contextStepId, assessment);
@@ -120,7 +121,9 @@ export function buildTutorResponseMeta({
   return {
     actions: stageActionsForReply(plan, stage, learningState, assessment),
     focusTargets,
-    checkpoint: assessment?.activeStep?.complete || assessment?.guidance?.readyForPrediction
+    checkpoint: completionState?.complete
+      ? null
+      : assessment?.activeStep?.complete || assessment?.guidance?.readyForPrediction
       ? {
         prompt: stage?.checkpointPrompt || "Does this look correct?",
         options: ["yes", "not_sure"],
@@ -128,11 +131,16 @@ export function buildTutorResponseMeta({
       : null,
     stageStatus: {
       currentStageId: stage?.id || null,
-      canAdvance: plan.experienceMode === "analytic_auto"
+      canAdvance: completionState?.complete
+        ? false
+        : plan.experienceMode === "analytic_auto"
         ? true
         : Boolean(assessment?.activeStep?.complete || assessment?.guidance?.readyForPrediction),
     },
     systemContextMessage: systemContextMessage(plan),
+    completionState: completionState?.complete
+      ? { complete: true, reason: completionState.reason || "correct-answer" }
+      : { complete: false, reason: null },
     sceneDirective: plan.experienceMode === "analytic_auto"
       ? {
         stageId: sceneMoment?.id || stage?.id || null,

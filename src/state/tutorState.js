@@ -27,6 +27,11 @@ export class TutorState extends EventTarget {
       challengeId: null,
       score: 0,
       streak: 0,
+      completionState: {
+        complete: false,
+        reason: null,
+      },
+      similarQuestions: [],
       learningStage: "orient",
       predictionState: {
         prompt: "",
@@ -50,6 +55,8 @@ export class TutorState extends EventTarget {
   get challengeId() { return this._state.challengeId; }
   get score() { return this._state.score; }
   get streak() { return this._state.streak; }
+  get completionState() { return this._state.completionState; }
+  get similarQuestions() { return this._state.similarQuestions; }
   get learningStage() { return this._state.learningStage; }
   get predictionState() { return this._state.predictionState; }
   get transcriptCollapsed() { return this._state.transcriptCollapsed; }
@@ -78,6 +85,11 @@ export class TutorState extends EventTarget {
     this._state.hintsUsed = 0;
     this._state.latestAssessment = null;
     this._state.learningStage = "orient";
+    this._state.completionState = {
+      complete: false,
+      reason: null,
+    };
+    this._state.similarQuestions = [];
     this._state.predictionState = {
       prompt: plan?.learningMoments?.predict?.prompt || "",
       response: "",
@@ -97,6 +109,19 @@ export class TutorState extends EventTarget {
   setAssessment(assessment) {
     this._state.latestAssessment = assessment;
     this._emit("assessment", { assessment });
+  }
+
+  setCompletionState(completionState = { complete: false, reason: null }) {
+    this._state.completionState = {
+      complete: Boolean(completionState?.complete),
+      reason: completionState?.complete ? completionState?.reason || "correct-answer" : null,
+    };
+    this._emit("completion", { completionState: this._state.completionState });
+  }
+
+  setSimilarQuestions(suggestions = []) {
+    this._state.similarQuestions = Array.isArray(suggestions) ? [...suggestions] : [];
+    this._emit("similar-questions", { similarQuestions: this._state.similarQuestions });
   }
 
   setLearningStage(stage) {
@@ -232,6 +257,11 @@ export class TutorState extends EventTarget {
       challengeId: null,
       score,
       streak,
+      completionState: {
+        complete: false,
+        reason: null,
+      },
+      similarQuestions: [],
       learningStage: "orient",
       predictionState: {
         prompt: "",

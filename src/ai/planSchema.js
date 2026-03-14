@@ -21,6 +21,7 @@ const VALID_TUTOR_ACTION_KINDS = [
   "reveal-next-step",
   "reveal-full-solution",
   "reset-view",
+  "start-suggested-question",
 ];
 
 function normalizeString(value, fallback = "") {

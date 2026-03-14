@@ -243,7 +243,7 @@ export function buildLinePlaneIntersectionPlan(questionText, sourceSummary = {})
     { id: "normal-pointer", type: "arrow", origin: roundVec(add(planeCenter, scale(normalUnit, planeSize * 0.22)), 4), target: roundVec(add(planeCenter, scale(normalUnit, planeSize * 0.52)), 4), text: "The normal sets the plane's orientation", style: "annotation", color: "#ffd966" },
     { id: "substitution-pointer", type: "arrow", origin: roundVec(add(intersection, [1.5, 1.3, 1.5]), 4), target: roundVec(intersection, 4), text: "Substituting shows the line already hits the plane here", style: "annotation", color: "#ffd966" },
     { id: "intersection-label", type: "point-label", position: roundVec(add(intersection, [0.25, 0.45, 0.25]), 4), text: `Intersection = ${formatVector(roundVec(intersection, 3), 3)}`, style: "formula" },
-  ];
+  ].filter(Boolean);
 
   const cameraBookmarks = [
     { id: "overview", label: "Overview", description: "See the line, plane, and point together.", ...cameraForBounds(bounds) },
@@ -304,11 +304,13 @@ export function buildLinePlaneIntersectionPlan(questionText, sourceSummary = {})
 }
 
 export function buildLinePlaneAnglePlan(questionText, sourceSummary = {}) {
-  const direction = parseDirectionVector(questionText);
+  const anchoredLine = parseLineThroughPointDirection(questionText);
+  const direction = anchoredLine?.direction || parseDirectionVector(questionText);
   const plane = parsePlaneEquation(questionText);
   if (!direction || !plane) return null;
 
-  const linePoint = [0, 0, 0];
+  const linePoint = anchoredLine?.point || [0, 0, 0];
+  const anchorLabel = anchoredLine?.label || "P";
   const lineSegment = lineSegmentFromPointDirection(linePoint, direction, 4.8);
   const planeCenter = pointOnPlane(plane.normal, plane.constant);
   const planeSize = planeSizeFromPoints([linePoint, lineSegment.start, lineSegment.end, planeCenter]);
@@ -320,6 +322,18 @@ export function buildLinePlaneAnglePlan(questionText, sourceSummary = {}) {
   const normalAngleDegrees = 90 - angleDegrees;
   const bounds = buildCoordinateBounds([linePoint, lineSegment.start, lineSegment.end, planeCenter, normalEnd], 3);
   const overview = "Auto-draw the line, plane, and normal so the learner can see that the line-plane angle is the complement of the line-normal angle.";
+  const observeObjectIds = anchoredLine ? ["line-main", "plane-main", "point-anchor"] : ["line-main", "plane-main"];
+  const observeOverlayIds = anchoredLine ? ["line-direction-label", "plane-equation-label", "point-anchor-label"] : ["line-direction-label", "plane-equation-label"];
+  const relatedObjectIds = anchoredLine ? ["line-main", "plane-main", "point-anchor", "normal-guide"] : ["line-main", "plane-main", "normal-guide"];
+  const relatedOverlayIds = anchoredLine
+    ? ["analytic-axes", "line-direction-label", "plane-equation-label", "point-anchor-label", "normal-label", "complement-pointer"]
+    : ["analytic-axes", "line-direction-label", "plane-equation-label", "normal-label", "complement-pointer"];
+  const formulaOverlayIds = anchoredLine
+    ? ["analytic-axes", "line-direction-label", "plane-equation-label", "point-anchor-label", "normal-label"]
+    : ["analytic-axes", "line-direction-label", "plane-equation-label", "normal-label"];
+  const solveOverlayIds = anchoredLine
+    ? ["analytic-axes", "line-direction-label", "plane-equation-label", "point-anchor-label", "normal-label", "angle-result-label"]
+    : ["analytic-axes", "line-direction-label", "plane-equation-label", "normal-label", "angle-result-label"];
 
   const objectSuggestions = [
     {
@@ -358,6 +372,26 @@ export function buildLinePlaneAnglePlan(questionText, sourceSummary = {}) {
         metadata: { role: "plane", roles: ["plane", "reference"], normal: roundVec(plane.normal, 4), equation: plane.equation },
       },
     },
+    anchoredLine
+      ? {
+        id: "point-anchor",
+        title: `${anchorLabel} point`,
+        purpose: "Mark the given point the line passes through.",
+        optional: false,
+        tags: ["point", "anchor"],
+        roles: ["point", "reference"],
+        object: {
+          id: "point-anchor",
+          label: anchorLabel,
+          shape: "pointMarker",
+          color: "#ff7ca8",
+          position: roundVec(linePoint, 4),
+          rotation: [0, 0, 0],
+          params: { radius: 0.12 },
+          metadata: { role: "point", roles: ["point", "reference"], coordinates: roundVec(linePoint, 4) },
+        },
+      }
+      : null,
     {
       id: "normal-guide",
       title: "Normal",
@@ -376,16 +410,19 @@ export function buildLinePlaneAnglePlan(questionText, sourceSummary = {}) {
         metadata: { role: "normal", roles: ["normal", "reference"], direction: roundVec(plane.normal, 4) },
       },
     },
-  ];
+  ].filter(Boolean);
 
   const sceneOverlays = [
     { id: "analytic-axes", type: "coordinate-frame", bounds },
     { id: "line-direction-label", type: "object-label", targetObjectId: "line-main", text: `d = ${formatVector(direction, 3)}`, offset: [0.2, 0.4, 0.2], style: "name" },
     { id: "plane-equation-label", type: "text", position: roundVec(add(planeCenter, [0, Math.max(1.2, planeSize * 0.18), 0]), 4), text: plane.equation, style: "formula" },
+    anchoredLine
+      ? { id: "point-anchor-label", type: "point-label", position: roundVec(add(linePoint, [0.25, 0.35, 0.25]), 4), text: `${anchorLabel}${formatVector(linePoint, 3)}`, style: "name" }
+      : null,
     { id: "normal-label", type: "object-label", targetObjectId: "normal-guide", text: `n = ${formatVector(plane.normal, 3)}`, offset: [0.25, 0.35, 0.2], style: "annotation" },
     { id: "complement-pointer", type: "arrow", origin: roundVec(add(planeCenter, [planeSize * 0.45, planeSize * 0.45, planeSize * 0.45]), 4), target: roundVec(planeCenter, 4), text: "Find the angle to the normal first, then take the complement", style: "annotation", color: "#ffd966" },
     { id: "angle-result-label", type: "text", position: roundVec(add(planeCenter, [0.4, 1.2, 0.4]), 4), text: `Angle with plane ≈ ${formatNumber(angleDegrees, 3)}°`, style: "formula" },
-  ];
+  ].filter(Boolean);
 
   const cameraBookmarks = [
     { id: "overview", label: "Overview", description: "See the line, plane, and normal together.", ...cameraForBounds(bounds) },
@@ -393,8 +430,32 @@ export function buildLinePlaneAnglePlan(questionText, sourceSummary = {}) {
   ];
 
   const sceneMoments = buildAnalyticMoments([
-    { id: "observe", title: "Observe", prompt: "Here's the line and the plane. Rotate the scene and notice their orientations before we introduce the normal.", goal: "See the line and plane clearly before adding helper vectors.", focusTargets: ["line-main", "plane-main"], visibleObjectIds: ["line-main", "plane-main"], visibleOverlayIds: ["line-direction-label", "plane-equation-label"], cameraBookmarkId: "overview" },
-    { id: "relate", title: "Relate", prompt: "Now reveal the normal. The angle between a line and a plane is understood through the plane's normal, then interpreted as a complement.", goal: "Notice that the line-plane angle is complementary to the line-normal angle.", focusTargets: ["line-main", "normal-guide"], visibleObjectIds: ["line-main", "plane-main", "normal-guide"], visibleOverlayIds: ["analytic-axes", "line-direction-label", "plane-equation-label", "normal-label", "complement-pointer"], cameraBookmarkId: "normal-view" },
+    {
+      id: "observe",
+      title: "Observe",
+      prompt: anchoredLine
+        ? "Here's the anchored line and the plane. Rotate the scene and notice where the given point sits on the line before we introduce the normal."
+        : "Here's the line and the plane. Rotate the scene and notice their orientations before we introduce the normal.",
+      goal: anchoredLine
+        ? "See the given point, the line direction, and the plane together before adding helper vectors."
+        : "See the line and plane clearly before adding helper vectors.",
+      focusTargets: anchoredLine ? ["point-anchor", "line-main", "plane-main"] : ["line-main", "plane-main"],
+      visibleObjectIds: observeObjectIds,
+      visibleOverlayIds: observeOverlayIds,
+      cameraBookmarkId: "overview",
+    },
+    {
+      id: "relate",
+      title: "Relate",
+      prompt: anchoredLine
+        ? "Now reveal the normal. The anchor point keeps the line grounded, while the normal shows why the line-plane angle is really a complement story."
+        : "Now reveal the normal. The angle between a line and a plane is understood through the plane's normal, then interpreted as a complement.",
+      goal: "Notice that the line-plane angle is complementary to the line-normal angle.",
+      focusTargets: anchoredLine ? ["point-anchor", "line-main", "normal-guide"] : ["line-main", "normal-guide"],
+      visibleObjectIds: relatedObjectIds,
+      visibleOverlayIds: relatedOverlayIds,
+      cameraBookmarkId: "normal-view",
+    },
     { id: "formula", title: "Formula", prompt: "Use sin(theta) = |d · n| / (|d||n|) for the line-plane angle, or find the angle to the normal and subtract from 90°.", goal: "Connect the dot product to the visible line and normal directions.", focusTargets: ["line-main", "normal-guide"], visibleObjectIds: ["line-main", "plane-main", "normal-guide"], visibleOverlayIds: ["analytic-axes", "line-direction-label", "plane-equation-label", "normal-label"], cameraBookmarkId: "normal-view", revealFormula: true },
     { id: "solve", title: "Solve", prompt: "Compute the dot product and magnitudes, then compare the number to the small acute angle you can see in the scene.", goal: "Use the formula to get the angle numerically.", focusTargets: ["line-main", "normal-guide"], visibleObjectIds: ["line-main", "plane-main", "normal-guide"], visibleOverlayIds: ["analytic-axes", "line-direction-label", "plane-equation-label", "normal-label", "angle-result-label"], cameraBookmarkId: "normal-view", revealFormula: true },
     { id: "explain", title: "Explain", prompt: "Explain why the angle to the plane is small: the line is almost perpendicular to the normal, so it sits nearly along the plane.", goal: "State the complement relationship in your own words.", focusTargets: ["line-main", "plane-main", "normal-guide"], visibleObjectIds: ["line-main", "plane-main", "normal-guide"], visibleOverlayIds: ["analytic-axes", "line-direction-label", "plane-equation-label", "normal-label", "angle-result-label"], cameraBookmarkId: "overview", revealFormula: true, revealFullSolution: true },
@@ -408,7 +469,7 @@ export function buildLinePlaneAnglePlan(questionText, sourceSummary = {}) {
     { id: "step-answer", title: "Solve", formula: `theta ≈ ${formatNumber(angleDegrees, 3)}°`, explanation: `The line-plane angle is about ${formatNumber(angleDegrees, 3)} degrees. The angle with the normal is about ${formatNumber(normalAngleDegrees, 3)} degrees.` },
   ];
 
-  return normalizeScenePlan({
+  const plan = normalizeScenePlan({
     ...buildBaseQuestionFields(questionText, "line_plane_angle", sourceSummary, overview),
     sceneFocus: {
       concept: "line-plane angle",
@@ -431,8 +492,8 @@ export function buildLinePlaneAnglePlan(questionText, sourceSummary = {}) {
     analyticContext: {
       subtype: "line_plane_angle",
       entities: {
-        points: [],
-        lines: [{ id: "line-main", label: "Line", point: linePoint, direction: roundVec(direction, 4) }],
+        points: anchoredLine ? [{ id: "point-anchor", label: anchorLabel, coordinates: roundVec(linePoint, 4) }] : [],
+        lines: [{ id: "line-main", label: "Line", point: roundVec(linePoint, 4), direction: roundVec(direction, 4) }],
         planes: [{ id: "plane-main", label: "Plane", normal: roundVec(plane.normal, 4), constant: round(plane.constant, 4) }],
       },
       derivedValues: { dotProduct: round(dot(direction, plane.normal), 6), sineRatio: round(sineRatio, 6), angleDegrees: round(angleDegrees, 6), normalAngleDegrees: round(normalAngleDegrees, 6) },
@@ -448,4 +509,41 @@ export function buildLinePlaneAnglePlan(questionText, sourceSummary = {}) {
     challengePrompts: [{ id: "analytic-follow-up", prompt: "Why do we use the plane normal instead of the plane equation directly?", expectedKind: "text", expectedAnswer: null, tolerance: 0 }],
     liveChallenge: null,
   });
+
+  const formulaMoment = plan.sceneMoments.find((moment) => moment.id === "formula");
+  const solveMoment = plan.sceneMoments.find((moment) => moment.id === "solve");
+  const explainMoment = plan.sceneMoments.find((moment) => moment.id === "explain");
+  if (formulaMoment) {
+    formulaMoment.focusTargets = anchoredLine ? ["point-anchor", "line-main", "normal-guide"] : ["line-main", "normal-guide"];
+    formulaMoment.visibleObjectIds = relatedObjectIds;
+    formulaMoment.visibleOverlayIds = formulaOverlayIds;
+  }
+  if (solveMoment) {
+    solveMoment.focusTargets = anchoredLine ? ["point-anchor", "line-main", "normal-guide"] : ["line-main", "normal-guide"];
+    solveMoment.visibleObjectIds = relatedObjectIds;
+    solveMoment.visibleOverlayIds = solveOverlayIds;
+  }
+  if (explainMoment) {
+    explainMoment.focusTargets = anchoredLine ? ["point-anchor", "line-main", "plane-main", "normal-guide"] : ["line-main", "plane-main", "normal-guide"];
+    explainMoment.visibleObjectIds = relatedObjectIds;
+    explainMoment.visibleOverlayIds = solveOverlayIds;
+  }
+
+  const formulaStep = plan.buildSteps.find((step) => step.id === "formula");
+  const solveStep = plan.buildSteps.find((step) => step.id === "solve");
+  const explainStep = plan.buildSteps.find((step) => step.id === "explain");
+  if (formulaStep) {
+    formulaStep.highlightObjectIds = anchoredLine ? ["point-anchor", "line-main", "normal-guide"] : ["line-main", "normal-guide"];
+    formulaStep.suggestedObjectIds = relatedObjectIds;
+  }
+  if (solveStep) {
+    solveStep.highlightObjectIds = anchoredLine ? ["point-anchor", "line-main", "normal-guide"] : ["line-main", "normal-guide"];
+    solveStep.suggestedObjectIds = relatedObjectIds;
+  }
+  if (explainStep) {
+    explainStep.highlightObjectIds = anchoredLine ? ["point-anchor", "line-main", "plane-main", "normal-guide"] : ["line-main", "plane-main", "normal-guide"];
+    explainStep.suggestedObjectIds = relatedObjectIds;
+  }
+
+  return plan;
 }

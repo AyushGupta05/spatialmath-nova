@@ -2,6 +2,7 @@ import {
   requestScenePlan,
   evaluateBuild,
   askTutor,
+  requestSimilarTutorQuestions,
   requestVoiceResponse,
 } from "../ai/client.js";
 import { buildSceneSnapshotFromSuggestions, normalizeScenePlan } from "../ai/planSchema.js";
@@ -13,6 +14,7 @@ import { tutorState } from "../state/tutorState.js";
 import { initUnfoldDrawer, syncUnfoldDrawer } from "./unfoldDrawer.js";
 import { MicrophoneCapture } from "./microphoneCapture.js";
 import { extractPastedQuestionImageFile } from "./questionImage.js";
+import { buildSuggestedQuestionActions, isStandaloneMathProblem } from "./tutorConversation.js";
 
 let world = null;
 let sceneApi = null;
@@ -30,6 +32,8 @@ let analyticOverlayManager = null;
 let analyticFormulaVisible = false;
 let analyticFullSolutionVisible = false;
 let analyticFormulaDismissed = false;
+let similarQuestionRequest = null;
+let lastCompletionPromptKey = null;
 
 let questionSection;
 let questionInput;
@@ -97,6 +101,19 @@ function currentSceneMoment(plan = activePlan()) {
     || plan.sceneMoments[Math.min(tutorState.currentStep, plan.sceneMoments.length - 1)]
     || plan.sceneMoments[0]
     || null;
+}
+
+function isLessonComplete() {
+  return Boolean(tutorState.completionState?.complete);
+}
+
+function suggestionActions() {
+  return buildSuggestedQuestionActions(tutorState.similarQuestions || []);
+}
+
+function completionPromptKey(plan = activePlan(), suggestions = tutorState.similarQuestions || []) {
+  if (!plan) return "";
+  return `${plan.problem?.id || "plan"}:${suggestions.map((item) => item.prompt).join("|")}`;
 }
 
 function currentSnapshot() {
@@ -385,6 +402,9 @@ function fillPreviewActionObjectSpec(action, plan = activePlan(), assessment = t
 
 function stageActionsForClient(plan = activePlan(), assessment = tutorState.latestAssessment) {
   if (!plan) return [];
+  if (isLessonComplete()) {
+    return suggestionActions();
+  }
 
   const stage = currentLessonStage(plan);
   if (isAnalyticPlan(plan)) {
@@ -507,6 +527,8 @@ function updateComposerState() {
     chatInput.disabled = false;
     if (!hasPlan) {
       chatInput.placeholder = "Chat, ask about the scene, or say 'show me something cool'";
+    } else if (isLessonComplete()) {
+      chatInput.placeholder = "Ask a follow-up, or type a new math question";
     } else if (tutorState.learningStage === "predict" && !tutorState.predictionState.submitted) {
       chatInput.placeholder = "What's your prediction?";
     } else {
@@ -526,6 +548,61 @@ function setCheckpointState(checkpoint = null) {
   }
   chatCheckpoint.classList.remove("hidden");
   chatCheckpointPrompt.textContent = checkpoint.prompt || "Does this look correct?";
+}
+
+function announceCompletionOptions() {
+  const plan = activePlan();
+  const actions = suggestionActions();
+  const key = completionPromptKey(plan, tutorState.similarQuestions || []);
+  if (!plan || !isLessonComplete() || !actions.length || !key || key === lastCompletionPromptKey) return;
+  lastCompletionPromptKey = key;
+  addTranscriptMessage("tutor", "This question is wrapped. Ask a follow-up, or try one of these similar prompts.", {
+    actions,
+  });
+}
+
+async function fetchSimilarQuestionsOnce() {
+  const plan = activePlan();
+  if (!plan || !isLessonComplete()) return;
+  if (tutorState.similarQuestions?.length) {
+    announceCompletionOptions();
+    return;
+  }
+  if (similarQuestionRequest) {
+    await similarQuestionRequest;
+    return;
+  }
+
+  similarQuestionRequest = requestSimilarTutorQuestions({ plan, limit: 3 })
+    .then((payload) => {
+      tutorState.setSimilarQuestions(payload?.suggestions || []);
+      announceCompletionOptions();
+    })
+    .catch((error) => {
+      console.error("Similar tutor questions failed:", error);
+      tutorState.setSimilarQuestions([]);
+    })
+    .finally(() => {
+      similarQuestionRequest = null;
+    });
+
+  await similarQuestionRequest;
+}
+
+function completeLesson({ reason = "correct-answer", revealSolution = false } = {}) {
+  tutorState.setCompletionState({ complete: true, reason });
+  tutorState.setPhase("complete");
+  tutorState.setSimilarQuestions(tutorState.similarQuestions || []);
+  setCheckpointState(null);
+  if (revealSolution) {
+    analyticFormulaVisible = true;
+    analyticFullSolutionVisible = true;
+    analyticFormulaDismissed = false;
+  }
+  updateStageRail();
+  renderAssessment(tutorState.latestAssessment);
+  renderSceneInfo();
+  void fetchSimilarQuestionsOnce();
 }
 
 function renderAnalyticPanels(plan = activePlan()) {
@@ -582,7 +659,10 @@ function updateStageRail() {
 
   stageRail.classList.remove("hidden");
 
-  if ((learningStage === "orient" || learningStage === "build") && stage) {
+  if (isLessonComplete()) {
+    stageRailProgress.textContent = "Complete";
+    stageRailGoal.textContent = "Solved. Ask a follow-up or start a similar question.";
+  } else if ((learningStage === "orient" || learningStage === "build") && stage) {
     stageRailProgress.textContent = `${Math.max(stageIndex + 1, 1)} / ${plan.lessonStages.length}`;
     stageRailGoal.textContent = stage.goal || plan.sceneFocus?.focusPrompt || "";
   } else if (learningStage === "predict") {
@@ -698,6 +778,15 @@ function renderAssessment(assessment) {
       return;
     }
     sceneValidation.innerHTML = `<p class="muted-text">The tutor will inspect the scene and highlight the next useful idea.</p>`;
+    return;
+  }
+
+  if (isLessonComplete()) {
+    sceneValidation.innerHTML = `
+      <div class="validation-stat"><strong>Solved</strong></div>
+      <div class="validation-stat"><strong>Next move</strong><br />Ask a follow-up or try a similar question.</div>
+      <div class="validation-stat"><strong>Answer</strong><br />${escapeHtml(activePlan()?.answerScaffold?.finalAnswer || "Shown in the lesson")}</div>
+    `;
     return;
   }
 
@@ -870,6 +959,7 @@ function renderAnnotations() {
 function announceCurrentStage(force = false) {
   const plan = activePlan();
   if (!plan) return;
+  if (isLessonComplete() && !force) return;
 
   const stageKey = currentStageKey(plan);
   if (!force && lastAnnouncedStageKey === stageKey) return;
@@ -960,6 +1050,8 @@ function setPlan(plan, options = {}) {
   analyticFormulaVisible = false;
   analyticFullSolutionVisible = false;
   analyticFormulaDismissed = false;
+  similarQuestionRequest = null;
+  lastCompletionPromptKey = null;
   tutorState.setPlan(normalizedPlan, { mode: options.mode || normalizedPlan.problem?.mode || "guided" });
   tutorState.setPhase(isAnalyticPlan(normalizedPlan) ? "guided_build" : "plan_ready");
   tutorState.setLearningStage(isAnalyticPlan(normalizedPlan) ? "build" : "orient");
@@ -1003,6 +1095,8 @@ async function handleQuestionSubmit(overrides = {}) {
   analyticFormulaVisible = false;
   analyticFullSolutionVisible = false;
   analyticFormulaDismissed = false;
+  similarQuestionRequest = null;
+  lastCompletionPromptKey = null;
   analyticOverlayManager?.clear();
   renderAnalyticPanels(null);
   if (questionSubmit) questionSubmit.disabled = true;
@@ -1047,6 +1141,7 @@ function sceneContextPayload(plan, assessment) {
     guidance: assessment?.guidance || null,
     analyticContext: plan?.analyticContext || null,
     sceneMoment: currentSceneMoment(plan) || null,
+    completionState: tutorState.completionState || { complete: false, reason: null },
     formulaVisible: analyticFormulaVisible,
     fullSolutionVisible: analyticFullSolutionVisible,
     lastSceneFeedback,
@@ -1144,6 +1239,10 @@ async function sendTutorMessage(messageText, options = {}) {
     setTranscriptMessageText(typing, response.text || streamedText || "I could not generate a tutor reply.");
     syncStepFromTutorResponse(response, plan);
 
+    if (response.completionState?.complete) {
+      completeLesson({ reason: response.completionState.reason || "correct-answer" });
+    }
+
     const actions = response.actions?.length ? response.actions : stageActionsForClient(plan, tutorState.latestAssessment);
     renderMessageActions(typing, actions);
     tutorState.addMessage("assistant", response.text || streamedText || "I could not generate a tutor reply.");
@@ -1156,9 +1255,11 @@ async function sendTutorMessage(messageText, options = {}) {
     if (response.focusTargets?.length) {
       focusStageTargets(response.focusTargets, { selectFirst: true });
     }
-    if (response.checkpoint) {
+    if (response.checkpoint && !isLessonComplete()) {
       setCheckpointState(response.checkpoint);
     } else if (!plan) {
+      setCheckpointState(null);
+    } else if (isLessonComplete()) {
       setCheckpointState(null);
     }
     if (response.sceneDirective) {
@@ -1172,7 +1273,7 @@ async function sendTutorMessage(messageText, options = {}) {
     renderAssessment(plan ? tutorState.latestAssessment : null);
     renderSceneInfo();
     updateStageRail();
-    if (plan) {
+    if (plan && !isLessonComplete()) {
       announceCurrentStage();
     }
   } catch (error) {
@@ -1205,6 +1306,11 @@ async function handleComposerSubmit() {
     setCheckpointState(null);
     updateStageRail();
     announceCurrentStage(true);
+    return;
+  }
+
+  if (plan && isLessonComplete() && isStandaloneMathProblem(text)) {
+    await handleQuestionSubmit({ questionText: text, imageFile: null });
     return;
   }
 
@@ -1314,6 +1420,7 @@ function advanceLessonStage() {
     analyticFormulaVisible = true;
     analyticFullSolutionVisible = true;
     renderAnalyticPanels(plan);
+    completeLesson({ reason: "correct-answer", revealSolution: true });
     updateStageRail();
     return;
   }
@@ -1386,6 +1493,11 @@ async function handleTutorAction(action = {}) {
       updateStageRail();
       renderAnnotations();
       return;
+    case "start-suggested-question":
+      if (action.payload?.prompt) {
+        await handleQuestionSubmit({ questionText: action.payload.prompt, imageFile: null });
+      }
+      return;
     default:
       break;
   }
@@ -1414,6 +1526,7 @@ async function handleTutorAction(action = {}) {
       }
       applyAnalyticSceneState({ forceCamera: true });
       renderAnalyticPanels(plan);
+      completeLesson({ reason: "correct-answer", revealSolution: true });
       break;
     case "reset-view":
       applyAnalyticSceneState({ forceCamera: true });
@@ -1586,6 +1699,8 @@ function bindEvents() {
     analyticFormulaVisible = false;
     analyticFullSolutionVisible = false;
     analyticFormulaDismissed = false;
+    similarQuestionRequest = null;
+    lastCompletionPromptKey = null;
     analyticOverlayManager?.clear();
     sceneApi?.clearScene?.();
     sceneApi?.clearFocus?.();
