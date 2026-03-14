@@ -3,7 +3,11 @@ import {
   evaluateBuild,
   askTutor,
   requestSimilarTutorQuestions,
-  requestVoiceResponse,
+  appendVoiceSessionAudio,
+  createVoiceSession,
+  startVoiceSessionTurn,
+  stopVoiceSessionTurn,
+  subscribeToVoiceSession,
 } from "../ai/client.js";
 import { buildSceneSnapshotFromSuggestions, normalizeScenePlan } from "../ai/planSchema.js";
 import { computeGeometry } from "../core/geometry.js";
@@ -13,6 +17,7 @@ import { CameraDirector } from "../render/cameraDirector.js";
 import { tutorState } from "../state/tutorState.js";
 import { initUnfoldDrawer, syncUnfoldDrawer } from "./unfoldDrawer.js";
 import { MicrophoneCapture } from "./microphoneCapture.js";
+import { PcmAudioPlayer } from "./pcmAudioPlayer.js";
 import { extractPastedQuestionImageFile } from "./questionImage.js";
 import {
   buildSuggestedQuestionActions,
@@ -30,6 +35,11 @@ let lastSceneFeedback = "Nova Prism will react to what you do in the scene.";
 let voiceConversationId = null;
 let voiceRecording = false;
 let activeMicCapture = null;
+let voiceSessionUnsubscribe = null;
+let voiceAudioUploadChain = Promise.resolve();
+let voiceStreamDraft = null;
+let voiceAudioPlayer = null;
+let voiceHoldRequested = false;
 let lastAnnouncedStageKey = null;
 let lastCheckpointKey = null;
 let analyticOverlayManager = null;
@@ -301,6 +311,84 @@ function updateVoiceStatus(text = "", tone = "muted") {
   voiceStatus.classList.remove("hidden");
   if (tone === "ready") voiceStatus.style.color = "var(--accent)";
   if (tone === "error") voiceStatus.style.color = "var(--danger)";
+}
+
+function ensureVoiceAudioPlayer() {
+  if (!voiceAudioPlayer) {
+    voiceAudioPlayer = new PcmAudioPlayer({ sampleRate: 24000 });
+  }
+  return voiceAudioPlayer;
+}
+
+function resetVoiceDraft() {
+  voiceStreamDraft = {
+    userMessage: null,
+    assistantMessage: null,
+    inputTranscript: "",
+    assistantPreviewText: "",
+    assistantFinalText: "",
+  };
+  return voiceStreamDraft;
+}
+
+function currentVoiceDraft() {
+  return voiceStreamDraft || resetVoiceDraft();
+}
+
+function setVoiceTranscript(content = "") {
+  const draft = currentVoiceDraft();
+  const transcript = String(content || "").trim();
+  draft.inputTranscript = transcript;
+  if (!transcript) return;
+  if (!draft.userMessage) {
+    draft.userMessage = addTranscriptMessage("user", transcript);
+    return;
+  }
+  setTranscriptMessageText(draft.userMessage, transcript, { role: "user" });
+}
+
+function setVoiceAssistantMessage(content = "", { final = false } = {}) {
+  const draft = currentVoiceDraft();
+  const nextContent = String(content || "").trim();
+  if (!nextContent) return;
+  if (final) {
+    draft.assistantFinalText = nextContent;
+  } else {
+    draft.assistantPreviewText = nextContent;
+  }
+  const messageText = draft.assistantFinalText || draft.assistantPreviewText;
+  if (!draft.assistantMessage) {
+    draft.assistantMessage = addTranscriptMessage("tutor", messageText);
+    return;
+  }
+  setTranscriptMessageText(draft.assistantMessage, messageText, {
+    role: "tutor",
+    completion: false,
+  });
+}
+
+function closeVoiceSessionStream() {
+  voiceSessionUnsubscribe?.();
+  voiceSessionUnsubscribe = null;
+}
+
+async function resetVoiceSessionState() {
+  closeVoiceSessionStream();
+  voiceConversationId = null;
+  voiceStreamDraft = null;
+  voiceAudioUploadChain = Promise.resolve();
+  voiceHoldRequested = false;
+  if (activeMicCapture) {
+    await activeMicCapture.stop();
+    activeMicCapture = null;
+  }
+  voiceRecording = false;
+  voiceRecordBtn?.classList.remove("is-recording");
+  if (voiceRecordBtn) voiceRecordBtn.textContent = "\u{1F3A4}";
+  if (voiceAudioPlayer) {
+    voiceAudioPlayer.stop();
+  }
+  updateVoiceStatus("", "hidden");
 }
 
 function revokeQuestionPreview() {
@@ -1103,7 +1191,7 @@ function scheduleAssessment() {
 
 function setPlan(plan, options = {}) {
   const normalizedPlan = normalizeScenePlan(plan);
-  voiceConversationId = null;
+  void resetVoiceSessionState();
   lastAnnouncedStageKey = null;
   lastCheckpointKey = null;
   analyticFormulaVisible = false;
@@ -1389,21 +1477,6 @@ async function handleComposerSubmit() {
   await sendTutorMessage(text);
 }
 
-async function playReturnedAudio(response) {
-  if (!response?.audioBase64) return false;
-  const binary = atob(response.audioBase64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  const blob = new Blob([bytes], { type: response.contentType || "audio/wav" });
-  const url = URL.createObjectURL(blob);
-  const audio = new Audio(url);
-  audio.onended = () => URL.revokeObjectURL(url);
-  await audio.play();
-  return true;
-}
-
 function buildVoiceContext(plan = activePlan()) {
   return {
     plan,
@@ -1414,6 +1487,95 @@ function buildVoiceContext(plan = activePlan()) {
   };
 }
 
+function handleVoiceSessionEvent(event = {}) {
+  switch (event.type) {
+    case "state":
+      if (event.state === "connecting") {
+        updateVoiceStatus("Connecting voice session...", "ready");
+      } else if (event.state === "listening") {
+        updateVoiceStatus("Listening... release when you're done.", "ready");
+      } else if (event.state === "processing") {
+        updateVoiceStatus("Thinking...", "ready");
+      } else if (event.state === "responding") {
+        updateVoiceStatus("Replying...", "ready");
+      } else if (event.state === "idle") {
+        updateVoiceStatus("", "hidden");
+      }
+      return;
+    case "input_transcript":
+      setVoiceTranscript(event.content || "");
+      return;
+    case "assistant_text":
+      setVoiceAssistantMessage(event.content || "", {
+        final: event.generationStage === "FINAL",
+      });
+      return;
+    case "assistant_audio":
+      ensureVoiceAudioPlayer()
+        .appendBase64Chunk(event.audioBase64, event.sampleRateHertz || 24000)
+        .catch((error) => {
+          console.error("Voice audio playback failed:", error);
+        });
+      return;
+    case "done":
+      if (event.inputTranscript) {
+        setVoiceTranscript(event.inputTranscript);
+      }
+      setVoiceAssistantMessage(event.assistantText || "Nova Prism did not return a voice reply.", {
+        final: true,
+      });
+      voiceConversationId = event.conversationId || voiceConversationId;
+      syncAssessment();
+      voiceStreamDraft = null;
+      if (event.fallbackUsed) {
+        updateVoiceStatus("Voice replied in captions.", "ready");
+        window.setTimeout(() => updateVoiceStatus("", "hidden"), 1400);
+      } else {
+        updateVoiceStatus("", "hidden");
+      }
+      return;
+    default:
+      return;
+  }
+}
+
+async function ensureVoiceSessionConnected() {
+  if (voiceConversationId && voiceSessionUnsubscribe) {
+    return voiceConversationId;
+  }
+
+  if (!voiceConversationId) {
+    const session = await createVoiceSession();
+    voiceConversationId = session.conversationId || session.sessionId || voiceConversationId;
+  }
+  closeVoiceSessionStream();
+  voiceSessionUnsubscribe = subscribeToVoiceSession(voiceConversationId, {
+    onEvent: handleVoiceSessionEvent,
+    onError: (error) => {
+      console.error("Voice session stream error:", error);
+      updateVoiceStatus("Voice session disconnected. Hold the mic to reconnect.", "error");
+      closeVoiceSessionStream();
+    },
+  });
+  return voiceConversationId;
+}
+
+function queueVoiceAudioChunk(chunk) {
+  if (!voiceConversationId || !chunk?.audioBase64) {
+    return;
+  }
+  voiceAudioUploadChain = voiceAudioUploadChain
+    .then(() => appendVoiceSessionAudio({
+      sessionId: voiceConversationId,
+      audioBase64: chunk.audioBase64,
+      mimeType: chunk.mimeType,
+    }))
+    .catch((error) => {
+      console.error("Voice audio upload failed:", error);
+      updateVoiceStatus(`Voice error: ${error.message}`, "error");
+    });
+}
+
 async function finishVoiceCapture() {
   if (!activeMicCapture) return;
   const capture = activeMicCapture;
@@ -1421,58 +1583,65 @@ async function finishVoiceCapture() {
   voiceRecording = false;
   voiceRecordBtn?.classList.remove("is-recording");
   if (voiceRecordBtn) voiceRecordBtn.textContent = "\u{1F3A4}";
-  updateVoiceStatus("Listening...", "ready");
+  updateVoiceStatus("Thinking...", "ready");
 
   try {
-    const clip = await capture.finish();
-    const response = await requestVoiceResponse({
-      audioBase64: clip.audioBase64,
-      mimeType: clip.mimeType,
-      conversationId: voiceConversationId,
-      mode: "coach",
-      context: buildVoiceContext(),
-      playbackMode: "auto",
-    });
-    voiceConversationId = response.conversationId || voiceConversationId;
-
-    addTranscriptMessage("user", response.inputTranscript || "Voice question");
-    addTranscriptMessage("tutor", response.assistantText || response.transcript || "Nova Prism did not return a voice reply.");
-    if (!(await playReturnedAudio(response)) && (response.assistantText || response.transcript) && "speechSynthesis" in window) {
-      const utterance = new SpeechSynthesisUtterance(response.assistantText || response.transcript);
-      speechSynthesis.speak(utterance);
+    await capture.finish();
+    await voiceAudioUploadChain;
+    if (voiceConversationId) {
+      await stopVoiceSessionTurn(voiceConversationId);
     }
-
-    updateVoiceStatus("", "hidden");
-    syncAssessment();
   } catch (error) {
     console.error("Voice capture failed:", error);
     updateVoiceStatus(`Voice error: ${error.message}`, "error");
   }
 }
 
-async function toggleVoiceCapture() {
-  if (voiceRecording) {
-    await finishVoiceCapture();
-    return;
-  }
+async function startVoiceCapture() {
+  if (voiceRecording) return;
   if (!navigator.mediaDevices?.getUserMedia) {
     updateVoiceStatus("This browser cannot capture microphone audio.", "error");
     return;
   }
 
   try {
-    activeMicCapture = new MicrophoneCapture();
-    await activeMicCapture.start();
+    const sessionId = await ensureVoiceSessionConnected();
+    resetVoiceDraft();
+    ensureVoiceAudioPlayer().stop();
+    const sessionStart = await startVoiceSessionTurn({
+      sessionId,
+      mode: "coach",
+      context: buildVoiceContext(),
+      playbackMode: "auto",
+    });
+
+    if (sessionStart.fallbackUsed) {
+      updateVoiceStatus("Voice replied in captions.", "ready");
+      return;
+    }
+
+    voiceAudioUploadChain = Promise.resolve();
+    activeMicCapture = new MicrophoneCapture({ onChunk: queueVoiceAudioChunk });
+    await activeMicCapture.start({ onChunk: queueVoiceAudioChunk });
     voiceRecording = true;
     if (voiceRecordBtn) {
       voiceRecordBtn.classList.add("is-recording");
       voiceRecordBtn.textContent = "\u25A0";
     }
-    updateVoiceStatus("Recording...", "ready");
+    updateVoiceStatus("Listening... release when you're done.", "ready");
+    if (!voiceHoldRequested) {
+      await stopVoiceCapture();
+    }
   } catch (error) {
     console.error("Microphone start failed:", error);
-    updateVoiceStatus("", "hidden");
+    updateVoiceStatus(`Voice error: ${error.message}`, "error");
   }
+}
+
+async function stopVoiceCapture() {
+  voiceHoldRequested = false;
+  if (!voiceRecording) return;
+  await finishVoiceCapture();
 }
 
 function advanceLessonStage() {
@@ -1768,6 +1937,7 @@ function bindEvents() {
   buildFromDiagramBtn?.addEventListener("click", () => questionImageInput?.click());
   newQuestionBtn?.addEventListener("click", () => {
     tutorState.reset();
+    void resetVoiceSessionState();
     analyticFormulaVisible = false;
     analyticFullSolutionVisible = false;
     analyticFormulaDismissed = false;
@@ -1793,7 +1963,37 @@ function bindEvents() {
     const isCollapsed = questionSection?.classList.contains("is-collapsed");
     setQuestionPanelCollapsed(!isCollapsed, { force: true });
   });
-  voiceRecordBtn?.addEventListener("click", toggleVoiceCapture);
+  voiceRecordBtn?.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    voiceHoldRequested = true;
+    voiceRecordBtn?.setPointerCapture?.(event.pointerId);
+    startVoiceCapture();
+  });
+  voiceRecordBtn?.addEventListener("pointerup", (event) => {
+    event.preventDefault();
+    stopVoiceCapture();
+  });
+  voiceRecordBtn?.addEventListener("pointercancel", () => {
+    stopVoiceCapture();
+  });
+  voiceRecordBtn?.addEventListener("pointerleave", () => {
+    if (voiceRecording) {
+      stopVoiceCapture();
+    }
+  });
+  voiceRecordBtn?.addEventListener("keydown", (event) => {
+    if ((event.key === " " || event.key === "Enter") && !event.repeat) {
+      event.preventDefault();
+      voiceHoldRequested = true;
+      startVoiceCapture();
+    }
+  });
+  voiceRecordBtn?.addEventListener("keyup", (event) => {
+    if (event.key === " " || event.key === "Enter") {
+      event.preventDefault();
+      stopVoiceCapture();
+    }
+  });
   chatSend?.addEventListener("click", handleComposerSubmit);
   chatInput?.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {

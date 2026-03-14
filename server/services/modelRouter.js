@@ -9,8 +9,9 @@ const DEFAULT_MODELS = {
   ],
   voice: [
     process.env.NOVA_SONIC_MODEL_ID,
-    "global.amazon.nova-2-sonic-v1:0",
+    "amazon.nova-2-sonic-v1:0",
     "us.amazon.nova-2-sonic-v1:0",
+    "global.amazon.nova-2-sonic-v1:0",
     "amazon.nova-sonic-v1:0",
   ],
   embeddings: [

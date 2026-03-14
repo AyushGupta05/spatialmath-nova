@@ -130,6 +130,74 @@ export async function requestVoiceResponse(input, playbackMode = "auto") {
   return response.json();
 }
 
+export async function createVoiceSession() {
+  const response = await fetch(`${API_BASE}/voice/session`, {
+    method: "POST",
+  });
+  return readJsonOrError(response, "Failed to create a voice session");
+}
+
+export function subscribeToVoiceSession(sessionId, { onEvent, onError } = {}) {
+  const source = new EventSource(`${API_BASE}/voice/session/${encodeURIComponent(sessionId)}/events`);
+  source.onmessage = (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      onEvent?.(payload);
+    } catch (error) {
+      onError?.(error);
+    }
+  };
+  source.onerror = (error) => {
+    onError?.(error);
+  };
+  return () => source.close();
+}
+
+export async function startVoiceSessionTurn({
+  sessionId,
+  playbackMode = "auto",
+  voiceId = null,
+  mode = "coach",
+  context = null,
+  text = "",
+}) {
+  const response = await fetch(`${API_BASE}/voice/session/${encodeURIComponent(sessionId)}/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      playbackMode,
+      voiceId,
+      mode,
+      context,
+      text,
+    }),
+  });
+  return readJsonOrError(response, "Failed to start the voice session");
+}
+
+export async function appendVoiceSessionAudio({
+  sessionId,
+  audioBase64,
+  mimeType = "audio/lpcm;rate=16000;channels=1;sampleSizeBits=16",
+}) {
+  const response = await fetch(`${API_BASE}/voice/session/${encodeURIComponent(sessionId)}/audio`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      audioBase64,
+      mimeType,
+    }),
+  });
+  return readJsonOrError(response, "Failed to stream microphone audio");
+}
+
+export async function stopVoiceSessionTurn(sessionId) {
+  const response = await fetch(`${API_BASE}/voice/session/${encodeURIComponent(sessionId)}/stop`, {
+    method: "POST",
+  });
+  return readJsonOrError(response, "Failed to stop the voice session");
+}
+
 export async function fetchCapabilities() {
   const response = await fetch(`${API_BASE}/capabilities`);
   return readJsonOrError(response, "Failed to load capabilities");

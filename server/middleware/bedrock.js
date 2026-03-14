@@ -100,56 +100,82 @@ export async function invokeModelJson(modelId, payload, options = {}) {
   return JSON.parse(raw);
 }
 
-export async function invokeBidirectionalStream(modelId, events) {
-  async function* eventBody() {
-    for (const event of events) {
+function normalizeBidirectionalBody(events) {
+  if (events?.[Symbol.asyncIterator]) {
+    return (async function* bidirectionalBody() {
+      for await (const event of events) {
+        yield {
+          chunk: {
+            bytes: Buffer.from(JSON.stringify(event)),
+          },
+        };
+      }
+    }());
+  }
+
+  return (async function* bidirectionalBody() {
+    for (const event of events || []) {
       yield {
         chunk: {
           bytes: Buffer.from(JSON.stringify(event)),
         },
       };
     }
-  }
+  }());
+}
 
+function parseBidirectionalError(output) {
+  if (output.internalServerException) {
+    throw new Error(output.internalServerException.message || "Bedrock internal server exception");
+  }
+  if (output.modelStreamErrorException) {
+    throw new Error(output.modelStreamErrorException.message || "Bedrock stream error");
+  }
+  if (output.validationException) {
+    throw new Error(output.validationException.message || "Bedrock validation error");
+  }
+  if (output.throttlingException) {
+    throw new Error(output.throttlingException.message || "Bedrock throttling error");
+  }
+  if (output.modelTimeoutException) {
+    throw new Error(output.modelTimeoutException.message || "Bedrock model timeout");
+  }
+  if (output.serviceUnavailableException) {
+    throw new Error(output.serviceUnavailableException.message || "Bedrock service unavailable");
+  }
+}
+
+export async function startBidirectionalStream(modelId, events) {
   const response = await getClient().send(new InvokeModelWithBidirectionalStreamCommand({
     modelId,
-    body: eventBody(),
+    body: normalizeBidirectionalBody(events),
   }));
 
-  const decodedEvents = [];
-  for await (const output of response.body || []) {
-    if (output.chunk?.bytes) {
-      const raw = Buffer.from(output.chunk.bytes).toString("utf-8").trim();
-      if (raw) {
-        decodedEvents.push(JSON.parse(raw));
+  return (async function* decodedStream() {
+    for await (const output of response.body || []) {
+      if (output.chunk?.bytes) {
+        const raw = Buffer.from(output.chunk.bytes).toString("utf-8").trim();
+        if (raw) {
+          yield JSON.parse(raw);
+        }
+        continue;
       }
-      continue;
-    }
-    if (output.internalServerException) {
-      throw new Error(output.internalServerException.message || "Bedrock internal server exception");
-    }
-    if (output.modelStreamErrorException) {
-      throw new Error(output.modelStreamErrorException.message || "Bedrock stream error");
-    }
-    if (output.validationException) {
-      throw new Error(output.validationException.message || "Bedrock validation error");
-    }
-    if (output.throttlingException) {
-      throw new Error(output.throttlingException.message || "Bedrock throttling error");
-    }
-    if (output.modelTimeoutException) {
-      throw new Error(output.modelTimeoutException.message || "Bedrock model timeout");
-    }
-    if (output.serviceUnavailableException) {
-      throw new Error(output.serviceUnavailableException.message || "Bedrock service unavailable");
-    }
-  }
 
+      parseBidirectionalError(output);
+    }
+  }());
+}
+
+export async function invokeBidirectionalStream(modelId, events) {
+  const decodedEvents = [];
+  for await (const event of await startBidirectionalStream(modelId, events)) {
+    decodedEvents.push(event);
+  }
   return decodedEvents;
 }
 
 export const MODEL_IDS = {
   NOVA_PRO: process.env.NOVA_PRO_MODEL_ID || "amazon.nova-pro-v1:0",
   NOVA_LITE: process.env.NOVA_LITE_MODEL_ID || "amazon.nova-lite-v1:0",
-  NOVA_SONIC: process.env.NOVA_SONIC_MODEL_ID || "amazon.nova-sonic-v1:0",
+  NOVA_SONIC: process.env.NOVA_SONIC_MODEL_ID || "amazon.nova-2-sonic-v1:0",
 };

@@ -19,16 +19,21 @@ function toBase64(bytes) {
 }
 
 export class MicrophoneCapture {
-  constructor() {
+  constructor(options = {}) {
     this.stream = null;
     this.context = null;
     this.source = null;
     this.processor = null;
     this.chunks = [];
+    this.onChunk = options.onChunk || null;
+    this.bufferSize = options.bufferSize || 4096;
+    this.mimeType = "audio/lpcm;rate=16000;channels=1;sampleSizeBits=16";
   }
 
-  async start() {
+  async start(options = {}) {
     this.stop();
+    this.onChunk = options.onChunk || this.onChunk;
+    this.bufferSize = options.bufferSize || this.bufferSize;
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -39,11 +44,18 @@ export class MicrophoneCapture {
     });
     this.context = new AudioContext({ sampleRate: 16000 });
     this.source = this.context.createMediaStreamSource(this.stream);
-    this.processor = this.context.createScriptProcessor(4096, 1, 1);
+    this.processor = this.context.createScriptProcessor(this.bufferSize, 1, 1);
     this.chunks = [];
     this.processor.onaudioprocess = (event) => {
       const input = event.inputBuffer.getChannelData(0);
-      this.chunks.push(floatTo16BitPCM(input));
+      const pcm = floatTo16BitPCM(input);
+      this.chunks.push(pcm);
+      this.onChunk?.({
+        bytes: pcm,
+        audioBase64: toBase64(pcm),
+        byteLength: pcm.length,
+        mimeType: this.mimeType,
+      });
     };
     this.source.connect(this.processor);
     this.processor.connect(this.context.destination);
@@ -81,7 +93,7 @@ export class MicrophoneCapture {
     }
     return {
       audioBase64: toBase64(joined),
-      mimeType: "audio/lpcm;rate=16000;channels=1;sampleSizeBits=16",
+      mimeType: this.mimeType,
       byteLength: joined.length,
     };
   }
