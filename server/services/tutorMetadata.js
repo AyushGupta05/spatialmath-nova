@@ -29,6 +29,14 @@ function stageActionsForReply(plan, stage, learningState = {}, assessment = null
     const sceneIndex = Math.max(0, plan.sceneMoments.findIndex((moment) => moment.id === sceneMoment?.id));
     const includeNext = sceneIndex < Math.max(plan.sceneMoments.length - 1, 0);
     const actions = [
+      !sceneMoment?.revealFormula
+        ? {
+          id: `${stage.id}-formula`,
+          label: "Show Formula",
+          kind: "show-formula",
+          payload: { stageId: stage.id },
+        }
+        : null,
       includeNext
         ? {
           id: `${stage.id}-next`,

@@ -25,6 +25,30 @@ function summarizeSceneContext(sceneContext = {}) {
   return `${selection}\n${liveChallenge}\n${sceneFocus}\n${sourceSummary}\n${guidance}`;
 }
 
+function summarizeDerivedValues(analytic = {}) {
+  const derived = analytic.derivedValues || {};
+  if (!Object.keys(derived).length) return "";
+  const entries = Object.entries(derived)
+    .map(([key, value]) => `${key} = ${Array.isArray(value) ? `(${value.join(", ")})` : value}`)
+    .join(", ");
+  return `\nIntermediate computed values: ${entries}`;
+}
+
+function summarizeEntities(analytic = {}) {
+  const entities = analytic.entities || {};
+  const parts = [];
+  (entities.lines || []).forEach((line) => {
+    parts.push(`${line.label}: point=${JSON.stringify(line.point)} direction=${JSON.stringify(line.direction)}`);
+  });
+  (entities.points || []).forEach((point) => {
+    parts.push(`${point.label}: coordinates=${JSON.stringify(point.coordinates)}`);
+  });
+  (entities.planes || []).forEach((plane) => {
+    parts.push(`${plane.label}: normal=${JSON.stringify(plane.normal)} d=${plane.d}`);
+  });
+  return parts.length ? `\nEntities: ${parts.join("; ")}` : "";
+}
+
 function summarizeAnalyticContext(plan = {}, _sceneContext = {}, contextStepId = null, learningState = {}) {
   if (plan?.experienceMode !== "analytic_auto") return "Analytic context: none";
   const currentMoment = (plan.sceneMoments || []).find((moment) => moment.id === contextStepId)
@@ -41,6 +65,8 @@ function summarizeAnalyticContext(plan = {}, _sceneContext = {}, contextStepId =
     `Formula explanation: ${analytic.formulaCard?.explanation || "n/a"}`,
     currentMoment ? `Current scene moment: ${currentMoment.title} -> ${currentMoment.prompt}` : "Current scene moment: none",
     steps ? `Deterministic solution steps:\n${steps}` : "Deterministic solution steps: none",
+    summarizeEntities(analytic),
+    summarizeDerivedValues(analytic),
   ].join("\n");
 }
 
@@ -100,6 +126,30 @@ ${assessment.guidance?.coachFeedback || "n/a"}
 Answer gate:
 ${assessment.answerGate.reason}
 
+Exact answer: ${normalizedPlan.answerScaffold?.finalAnswer || "not available"}${normalizedPlan.answerScaffold?.unit ? ` ${normalizedPlan.answerScaffold.unit}` : ""}
+
+Answer-checking rules (CRITICAL - follow precisely):
+When the learner submits a numeric answer or asks "is X correct?", you MUST check it against the exact answer above. You have every intermediate value and entity listed in the analytic context. Use them.
+
+CASE 1 — CLOSE ENOUGH (within ~5% or reasonable rounding, e.g. 2.3 vs 2.3094):
+  Say: "Correct! [brief praise]. For exact precision, it's [exact answer]. [One sentence connecting the answer to the scene, e.g. 'That matches the length of the golden segment connecting the two lines.']"
+
+CASE 2 — WRONG but you can diagnose the mistake:
+  Before responding, silently run through these checks using the intermediate computed values and entities above:
+  - Did they swap v1 and v2? (Compute what the answer would be with swapped vectors)
+  - Did they forget the absolute value? (Would the answer be negative of theirs?)
+  - Did they forget to divide by |v1 x v2|? (Is their answer the unnormalized dot product?)
+  - Did they use the wrong formula entirely? (e.g. point-to-line instead of line-to-line)
+  - Did they confuse a point coordinate with a direction vector?
+  - Did they make an arithmetic error in the cross product or dot product?
+  - Did they swap numerator and denominator?
+  Once you identify the likely source, respond: "Not quite. Check [specific step] — look at [specific variable or value in the scene]. Did you [specific action that would produce their wrong answer]? Try recalculating just that part."
+  NEVER reveal the correct answer when they're wrong. Guide them to fix their specific mistake.
+
+CASE 3 — WRONG and you cannot figure out where it came from:
+  Say: "That's not matching what the scene shows. Let's work through it together — what formula did you start with? Walk me through your steps and I'll help you spot where it went off track."
+  Then guide them step-by-step through the solution, asking them to compute each intermediate value one at a time.
+
 Conversation rules:
 - Keep responses to 1-2 short sentences. One focused thought per reply.
 - ALWAYS end with a question that nudges the learner to think or look at the scene. Examples:
@@ -137,6 +187,23 @@ export function buildFallbackTutorReply({ plan, assessment, sceneContext, userMe
   const liveChallenge = sceneContext?.liveChallenge || null;
   const selected = sceneContext?.selection || null;
   const learningStage = sceneContext?.guidance?.readyForPrediction ? "predict-ready" : "building";
+
+  const finalAnswer = normalizedPlan.answerScaffold?.finalAnswer;
+  const answerMatch = lowerMessage.match(/(?:is\s+(?:the\s+)?answer\s+|(?:^|\s))(\d+(?:\.\d+)?)/);
+  if (finalAnswer && answerMatch) {
+    const userAnswer = parseFloat(answerMatch[1]);
+    const expected = parseFloat(finalAnswer);
+    if (Number.isFinite(userAnswer) && Number.isFinite(expected)) {
+      const tolerance = Math.max(Math.abs(expected) * 0.05, 0.05);
+      if (Math.abs(userAnswer - expected) <= tolerance) {
+        const isExact = String(userAnswer) === String(expected);
+        return isExact
+          ? `Correct! That's exactly right. Look at the highlighted segment in the scene — its length matches your answer perfectly.`
+          : `Correct! For exact precision, the answer is ${finalAnswer}. Look at the highlighted segment in the scene — its length matches.`;
+      }
+      return `That's not matching what the scene shows. Let's work through it together — what formula did you start with? Walk me through your steps and I'll help you spot where it went off track.`;
+    }
+  }
 
   if (normalizedPlan.experienceMode === "analytic_auto") {
     const currentMoment = normalizedPlan.sceneMoments.find((moment) => moment.id === contextStepId)

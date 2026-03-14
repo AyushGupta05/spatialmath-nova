@@ -2,11 +2,12 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { converseNovaStream, MODEL_IDS } from "../middleware/bedrock.js";
 import { evaluateBuild } from "../services/buildEvaluator.js";
+import { generateFreeformTutorTurn } from "../services/freeformTutor.js";
 import { buildTutorSystemPrompt, buildFallbackTutorReply } from "../services/tutorPrompt.js";
 import { resolveModelId } from "../services/modelRouter.js";
 import { buildTutorResponseMeta } from "../services/tutorMetadata.js";
 
-export function createTutorRoute({ streamModel = converseNovaStream } = {}) {
+export function createTutorRoute({ streamModel = converseNovaStream, freeformTurnGenerator = generateFreeformTutorTurn } = {}) {
   const tutorRoute = new Hono();
 
   tutorRoute.post("/", async (c) => {
@@ -20,8 +21,23 @@ export function createTutorRoute({ streamModel = converseNovaStream } = {}) {
         contextStepId = null,
       } = await c.req.json();
 
-      if (!plan || !sceneSnapshot || !userMessage || typeof userMessage !== "string") {
-        return c.json({ error: "plan, sceneSnapshot, and userMessage are required" }, 400);
+      if (!sceneSnapshot || !userMessage || typeof userMessage !== "string") {
+        return c.json({ error: "sceneSnapshot and userMessage are required" }, 400);
+      }
+
+      if (!plan) {
+        const freeformTurn = await freeformTurnGenerator({
+          sceneSnapshot,
+          sceneContext,
+          learningState,
+          userMessage,
+        });
+
+        return streamSSE(c, async (stream) => {
+          await stream.writeSSE({ data: JSON.stringify({ type: "meta", content: freeformTurn.meta || null }) });
+          await stream.writeSSE({ data: JSON.stringify({ type: "text", content: freeformTurn.text || "I am here. Ask me about the scene or tell me what to build." }) });
+          await stream.writeSSE({ data: JSON.stringify({ type: "done" }) });
+        });
       }
 
       const assessment = evaluateBuild(plan, sceneSnapshot, contextStepId);

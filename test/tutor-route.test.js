@@ -198,3 +198,30 @@ test("POST /api/tutor includes scene directives for analytic lessons", async () 
   assert.ok(meta.actions.some((action) => action.kind === "show-formula"));
   assert.ok(meta.actions.some((action) => action.kind === "reveal-full-solution"));
 });
+
+test("POST /api/tutor supports freeform scene chat without a lesson plan", async () => {
+  const tutorRoute = createTutorRoute();
+
+  const response = await tutorRoute.request("/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sceneSnapshot: { objects: [], selectedObjectId: null },
+      learningState: { history: [] },
+      userMessage: "Show me something cool",
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  const payloads = parseSsePayloads(await response.text());
+  const meta = payloads.find((entry) => entry.type === "meta")?.content;
+  const text = payloads.filter((entry) => entry.type === "text").map((entry) => entry.content).join("");
+
+  assert.equal(meta.mode, "freeform");
+  assert.ok(meta.actions.some((action) => action.kind === "freeform-prompt"));
+  assert.ok(meta.sceneCommand);
+  assert.equal(meta.sceneCommand.operations[0].kind, "replace_scene");
+  assert.ok(meta.sceneCommand.operations[0].objects.length > 0);
+  assert.equal(payloads.some((entry) => entry.type === "assessment"), false);
+  assert.match(text, /scene|line|point|angle|connector/i);
+});

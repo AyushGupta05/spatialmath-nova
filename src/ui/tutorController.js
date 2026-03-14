@@ -70,6 +70,7 @@ let solutionDrawer;
 let solutionDrawerTitle;
 let solutionDrawerSteps;
 let solutionDrawerClose;
+let newQuestionBtn;
 
 function formatNumber(value, digits = 2) {
   const next = Number(value);
@@ -198,7 +199,7 @@ function clearTranscript() {
   chatMessages.innerHTML = `
     <div class="chat-welcome">
       <p class="chat-welcome-title">Let's explore together</p>
-      <p class="chat-welcome-text">Ask a question and I'll build a 3D scene to help you see the idea.</p>
+      <p class="chat-welcome-text">Ask a question, talk about the current scene, or say "show me something cool" and I'll build a math visual.</p>
     </div>
   `;
 }
@@ -320,6 +321,7 @@ function setQuestionPanelCollapsed(collapsed, { force = false } = {}) {
     lessonPanelSummary.textContent = lessonPanelSummaryText();
     lessonPanelSummary.classList.toggle("hidden", !nextCollapsed);
   }
+  newQuestionBtn?.classList.toggle("hidden", !nextCollapsed);
 }
 
 function currentLessonStage(plan = activePlan()) {
@@ -390,6 +392,14 @@ function stageActionsForClient(plan = activePlan(), assessment = tutorState.late
     const moment = currentSceneMoment(plan);
     const sceneIndex = Math.max(0, (plan.sceneMoments || []).findIndex((m) => m.id === moment?.id));
     const hasNext = sceneIndex < Math.max((plan.sceneMoments || []).length - 1, 0);
+    if (!moment?.revealFormula) {
+      analyticActions.push({
+        id: `${stage?.id || "analytic"}-formula`,
+        label: "Show Formula",
+        kind: "show-formula",
+        payload: { stageId: stage?.id || null },
+      });
+    }
     if (hasNext) {
       analyticActions.push({
         id: `${stage?.id || "analytic"}-next`,
@@ -494,17 +504,17 @@ function buildStageIntroMessage(plan = activePlan(), assessment = tutorState.lat
 function updateComposerState() {
   const hasPlan = Boolean(activePlan());
   if (chatInput) {
-    chatInput.disabled = !hasPlan;
+    chatInput.disabled = false;
     if (!hasPlan) {
-      chatInput.placeholder = "What would you like to explore?";
+      chatInput.placeholder = "Chat, ask about the scene, or say 'show me something cool'";
     } else if (tutorState.learningStage === "predict" && !tutorState.predictionState.submitted) {
       chatInput.placeholder = "What's your prediction?";
     } else {
       chatInput.placeholder = "What do you think happens next?";
     }
   }
-  if (chatSend) chatSend.disabled = !hasPlan;
-  if (voiceRecordBtn) voiceRecordBtn.disabled = !hasPlan;
+  if (chatSend) chatSend.disabled = false;
+  if (voiceRecordBtn) voiceRecordBtn.disabled = false;
 }
 
 function setCheckpointState(checkpoint = null) {
@@ -625,7 +635,26 @@ function renderSceneInfo() {
   objectCount.textContent = String(count);
 
   if (!plan) {
-    sceneInfo.innerHTML = `<p class="muted-text">Add a prompt or diagram to generate a 3D lesson scene.</p>`;
+    if (!count) {
+      sceneInfo.innerHTML = `<p class="muted-text">No active lesson. Build a scene manually, ask a question, or say "show me something cool."</p>`;
+      return;
+    }
+
+    const freeformSelectionMarkup = selected
+      ? `
+        <p class="muted-text" style="margin:8px 0 0">
+          Selected: <strong>${escapeHtml(selected.label)}</strong>
+          <span class="formula">V = ${formatNumber(selected.metrics.volume)}, SA = ${formatNumber(selected.metrics.surfaceArea)}</span>
+        </p>
+      `
+      : `<p class="muted-text" style="margin:8px 0 0">Select an object, or ask Nova to explain or remix the scene.</p>`;
+
+    sceneInfo.innerHTML = `
+      <p style="margin:0 0 6px"><strong>Freeform scene</strong></p>
+      <p class="muted-text">${count} object${count === 1 ? "" : "s"} currently in the world</p>
+      <p class="muted-text">Nova can read this scene, talk about it, and edit it if you ask.</p>
+      ${freeformSelectionMarkup}
+    `;
     return;
   }
 
@@ -664,6 +693,10 @@ function renderSceneInfo() {
 function renderAssessment(assessment) {
   if (!sceneValidation) return;
   if (!assessment) {
+    if (!activePlan()) {
+      sceneValidation.innerHTML = `<p class="muted-text">Nova can chat about anything, inspect the current scene, and build a fresh math visual when you ask.</p>`;
+      return;
+    }
     sceneValidation.innerHTML = `<p class="muted-text">The tutor will inspect the scene and highlight the next useful idea.</p>`;
     return;
   }
@@ -751,6 +784,75 @@ function applySceneDirective(sceneDirective = null, { forceCamera = false } = {}
 function applyAnalyticSceneState({ forceCamera = false } = {}) {
   if (!isAnalyticPlan()) return;
   applySceneDirective(sceneDirectiveForCurrentMoment(), { forceCamera });
+}
+
+function mergeSceneObjects(baseObjects = [], nextObjects = []) {
+  const byId = new Map((baseObjects || []).map((objectSpec) => [objectSpec.id, objectSpec]));
+  (nextObjects || []).forEach((objectSpec) => {
+    if (!objectSpec?.id) return;
+    byId.set(objectSpec.id, objectSpec);
+  });
+  return [...byId.values()];
+}
+
+function applyAssistantSceneCommand(sceneCommand = null) {
+  if (!sceneCommand?.operations?.length || !sceneApi) return false;
+
+  sceneApi.cancelPreviewAction?.();
+  let snapshot = currentSnapshot();
+  let changedScene = false;
+
+  sceneCommand.operations.forEach((operation) => {
+    switch (operation.kind) {
+      case "replace_scene":
+        snapshot = sceneApi.loadSnapshot?.({
+          objects: operation.objects || [],
+          selectedObjectId: operation.selectedObjectId || null,
+        }, "assistant-replace") || currentSnapshot();
+        changedScene = true;
+        break;
+      case "merge_objects":
+        snapshot = sceneApi.loadSnapshot?.({
+          objects: mergeSceneObjects(snapshot.objects || [], operation.objects || []),
+          selectedObjectId: snapshot.selectedObjectId || null,
+        }, "assistant-merge") || currentSnapshot();
+        changedScene = true;
+        break;
+      case "remove_objects":
+        snapshot = sceneApi.loadSnapshot?.({
+          objects: (snapshot.objects || []).filter((objectSpec) => !(operation.objectIds || []).includes(objectSpec.id)),
+          selectedObjectId: (operation.objectIds || []).includes(snapshot.selectedObjectId) ? null : snapshot.selectedObjectId,
+        }, "assistant-remove") || currentSnapshot();
+        changedScene = true;
+        break;
+      case "select_object":
+        sceneApi.selectObject?.(operation.objectId || null);
+        snapshot = currentSnapshot();
+        break;
+      case "focus_objects":
+        sceneApi.focusObjects?.(operation.targetIds || [], { selectFirst: true });
+        break;
+      case "clear_scene":
+        sceneApi.clearScene?.();
+        snapshot = currentSnapshot();
+        changedScene = true;
+        break;
+      case "clear_focus":
+        sceneApi.clearFocus?.();
+        break;
+      case "reset_view":
+        sceneApi.resetView?.();
+        break;
+      default:
+        break;
+    }
+  });
+
+  renderAnnotations();
+  renderSceneInfo();
+  renderAssessment(activePlan() ? tutorState.latestAssessment : null);
+  updateStageRail();
+  return changedScene;
 }
 
 function renderAnnotations() {
@@ -927,6 +1029,7 @@ async function handleQuestionSubmit(overrides = {}) {
 function sceneContextPayload(plan, assessment) {
   const selected = selectedObjectContext();
   return {
+    objectCount: currentSnapshot().objects.length,
     selection: selected
       ? {
         id: selected.id,
@@ -946,6 +1049,7 @@ function sceneContextPayload(plan, assessment) {
     sceneMoment: currentSceneMoment(plan) || null,
     formulaVisible: analyticFormulaVisible,
     fullSolutionVisible: analyticFullSolutionVisible,
+    lastSceneFeedback,
   };
 }
 
@@ -1003,7 +1107,6 @@ function syncStepFromTutorResponse(response = {}, plan = activePlan()) {
 
 async function sendTutorMessage(messageText, options = {}) {
   const plan = activePlan();
-  if (!plan) return;
   const text = messageText?.trim();
   if (!text) return;
 
@@ -1047,22 +1150,31 @@ async function sendTutorMessage(messageText, options = {}) {
 
     if (response.assessment) {
       tutorState.setAssessment(response.assessment);
+    } else if (!plan) {
+      tutorState.setAssessment(null);
     }
     if (response.focusTargets?.length) {
       focusStageTargets(response.focusTargets, { selectFirst: true });
     }
     if (response.checkpoint) {
       setCheckpointState(response.checkpoint);
+    } else if (!plan) {
+      setCheckpointState(null);
     }
     if (response.sceneDirective) {
       applySceneDirective(response.sceneDirective, { forceCamera: true });
     }
+    if (response.sceneCommand) {
+      applyAssistantSceneCommand(response.sceneCommand);
+    }
 
     lastSceneFeedback = response.text || lastSceneFeedback;
-    renderAssessment(tutorState.latestAssessment);
+    renderAssessment(plan ? tutorState.latestAssessment : null);
     renderSceneInfo();
     updateStageRail();
-    announceCurrentStage();
+    if (plan) {
+      announceCurrentStage();
+    }
   } catch (error) {
     typing?.classList.remove("loading-dots");
     setTranscriptMessageText(typing, `Error: ${error.message}`);
@@ -1078,7 +1190,7 @@ async function handleExplain() {
 async function handleComposerSubmit() {
   const plan = activePlan();
   const text = chatInput?.value?.trim();
-  if (!plan || !text) return;
+  if (!text) return;
 
   chatInput.value = "";
 
@@ -1161,7 +1273,6 @@ async function finishVoiceCapture() {
 }
 
 async function toggleVoiceCapture() {
-  if (!activePlan()) return;
   if (voiceRecording) {
     await finishVoiceCapture();
     return;
@@ -1261,6 +1372,24 @@ function advanceLessonStage() {
 }
 
 async function handleTutorAction(action = {}) {
+  switch (action.kind) {
+    case "freeform-prompt":
+      await sendTutorMessage(action.payload?.prompt || action.label || "Show me something interesting.", {
+        userLabel: action.label || action.payload?.prompt || "Try that",
+      });
+      return;
+    case "clear-scene":
+      sceneApi?.clearScene?.();
+      setCheckpointState(null);
+      renderAssessment(activePlan() ? tutorState.latestAssessment : null);
+      renderSceneInfo();
+      updateStageRail();
+      renderAnnotations();
+      return;
+    default:
+      break;
+  }
+
   const plan = activePlan();
   if (!plan) return;
 
@@ -1364,7 +1493,33 @@ async function handleTutorAction(action = {}) {
 
 function handleSceneMutation(detail) {
   const plan = activePlan();
-  if (!plan || !detail || detail.type !== "objects") return;
+  if (!detail || detail.type !== "objects") return;
+
+  if (!plan) {
+    if (detail.reason === "place" && detail.object?.label) {
+      lastSceneFeedback = `Placed ${detail.object.label}.`;
+    } else if (detail.reason === "drag-end" && detail.object?.label) {
+      lastSceneFeedback = `Updated ${detail.object.label}.`;
+    } else if (detail.reason === "remove" && detail.object?.label) {
+      lastSceneFeedback = `Removed ${detail.object.label}.`;
+    } else if (detail.reason === "assistant-replace") {
+      lastSceneFeedback = "Loaded a fresh scene.";
+    } else if (detail.reason === "assistant-merge") {
+      lastSceneFeedback = "Updated the scene.";
+    } else if (detail.reason === "assistant-remove") {
+      lastSceneFeedback = "Removed objects from the scene.";
+    } else if (detail.reason === "clear") {
+      lastSceneFeedback = "Cleared the scene.";
+    }
+
+    renderSceneInfo();
+    renderAssessment(null);
+    updateStageRail();
+    syncUnfoldDrawer();
+    renderAnnotations();
+    return;
+  }
+
   if (isAnalyticPlan(plan) && detail.reason === "analytic-auto") {
     renderSceneInfo();
     updateStageRail();
@@ -1426,6 +1581,26 @@ function bindEvents() {
   });
 
   buildFromDiagramBtn?.addEventListener("click", () => questionImageInput?.click());
+  newQuestionBtn?.addEventListener("click", () => {
+    tutorState.reset();
+    analyticFormulaVisible = false;
+    analyticFullSolutionVisible = false;
+    analyticFormulaDismissed = false;
+    analyticOverlayManager?.clear();
+    sceneApi?.clearScene?.();
+    sceneApi?.clearFocus?.();
+    clearTranscript();
+    renderAnalyticPanels(null);
+    renderAssessment(null);
+    renderSceneInfo();
+    updateStageRail();
+    setQuestionPanelCollapsed(false, { force: true });
+    questionSection?.classList.remove("is-compact");
+    if (questionInput) {
+      questionInput.value = "";
+      questionInput.focus();
+    }
+  });
   lessonPanelToggle?.addEventListener("click", () => {
     if (!activePlan()) return;
     const isCollapsed = questionSection?.classList.contains("is-collapsed");
@@ -1515,6 +1690,7 @@ function bindDom() {
   solutionDrawerTitle = document.getElementById("solutionDrawerTitle");
   solutionDrawerSteps = document.getElementById("solutionDrawerSteps");
   solutionDrawerClose = document.getElementById("solutionDrawerClose");
+  newQuestionBtn = document.getElementById("newQuestionBtn");
 }
 
 export function initTutorController(context) {

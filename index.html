@@ -167,6 +167,27 @@
                 </div>
                 <span class="lesson-panel-icon" aria-hidden="true">&#9662;</span>
               </button>
+
+              <section id="formulaCard" class="formula-card hidden" aria-live="polite">
+                <div class="formula-card-head">
+                  <h3 id="formulaCardTitle" class="formula-card-title">Formula</h3>
+                  <div class="formula-card-actions">
+                    <button id="formulaCardRevealBtn" class="plan-btn btn-secondary" type="button">View Solution</button>
+                    <button id="formulaCardCloseBtn" class="formula-card-dismiss" type="button">&times;</button>
+                  </div>
+                </div>
+                <p id="formulaCardEquation" class="formula-card-equation"></p>
+                <p id="formulaCardExplanation" class="formula-card-copy"></p>
+              </section>
+
+              <section id="solutionDrawer" class="solution-drawer hidden" aria-live="polite">
+                <div class="formula-card-head">
+                  <h3 id="solutionDrawerTitle" class="formula-card-title">Worked Solution</h3>
+                  <button id="solutionDrawerClose" class="formula-card-dismiss" type="button">&times;</button>
+                </div>
+                <div id="solutionDrawerSteps" class="solution-drawer-steps"></div>
+              </section>
+
               <div id="questionSectionBody" class="question-section-body">
                 <div class="question-input-wrap">
                   <textarea
@@ -191,6 +212,8 @@
                 </div>
                 <div id="questionStatus" class="question-status hidden"></div>
               </div>
+
+              <button id="newQuestionBtn" class="new-question-btn hidden" type="button">New Question</button>
             </section>
 
             <section class="chat-lesson-shell">
@@ -199,26 +222,6 @@
                 <p id="stageRailGoal" class="stage-rail-goal"></p>
                 <h3 id="stageRailTitle" class="stage-rail-title hidden"></h3>
               </div>
-
-              <section id="formulaCard" class="formula-card hidden" aria-live="polite">
-                <div class="formula-card-head">
-                  <h3 id="formulaCardTitle" class="formula-card-title">Formula</h3>
-                  <div class="formula-card-actions">
-                    <button id="formulaCardRevealBtn" class="plan-btn btn-secondary" type="button">View Solution</button>
-                    <button id="formulaCardCloseBtn" class="formula-card-dismiss" type="button">&times;</button>
-                  </div>
-                </div>
-                <p id="formulaCardEquation" class="formula-card-equation"></p>
-                <p id="formulaCardExplanation" class="formula-card-copy"></p>
-              </section>
-
-              <section id="solutionDrawer" class="solution-drawer hidden" aria-live="polite">
-                <div class="formula-card-head">
-                  <h3 id="solutionDrawerTitle" class="formula-card-title">Worked Solution</h3>
-                  <button id="solutionDrawerClose" class="formula-card-dismiss" type="button">&times;</button>
-                </div>
-                <div id="solutionDrawerSteps" class="solution-drawer-steps"></div>
-              </section>
 
               <div id="chatMessages" class="chat-messages tutor-thread">
                 <div class="chat-welcome">
