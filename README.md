@@ -26,7 +26,7 @@ The app is built for the Amazon Nova hackathon story:
 
 ### Requirements
 
-- Node.js 20+
+- Node.js  20+
 - npm
 - Webcam for hand tracking
 - Microphone for push-to-talk voice mode
