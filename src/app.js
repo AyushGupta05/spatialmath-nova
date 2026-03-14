@@ -14,6 +14,7 @@ import {
 } from "./scene/objectMesh.js";
 import {
   baseSizeToParams,
+  defaultParamsForShape,
   defaultPositionForShape,
   distanceBetween,
   normalizeSceneObject,
@@ -359,22 +360,16 @@ export function bootstrapApp() {
 
   function disposePlacementPreview() {
     if (!placementPreview?.mesh) {
-      if (placementPreview?.pointMarker) {
-        world.scene.remove(placementPreview.pointMarker);
-        placementPreview.pointMarker.geometry?.dispose?.();
-        placementPreview.pointMarker.material?.dispose?.();
-      }
+      disposePreviewRenderable(placementPreview?.pointMarker);
+      disposePreviewRenderable(placementPreview?.guideLine);
+      disposePreviewRenderable(placementPreview?.endMarker);
       placementPreview = null;
       return;
     }
-    world.scene.remove(placementPreview.mesh);
-    placementPreview.mesh.geometry?.dispose?.();
-    placementPreview.mesh.material?.dispose?.();
-    if (placementPreview.pointMarker) {
-      world.scene.remove(placementPreview.pointMarker);
-      placementPreview.pointMarker.geometry?.dispose?.();
-      placementPreview.pointMarker.material?.dispose?.();
-    }
+    disposePreviewRenderable(placementPreview.mesh);
+    disposePreviewRenderable(placementPreview.pointMarker);
+    disposePreviewRenderable(placementPreview.guideLine);
+    disposePreviewRenderable(placementPreview.endMarker);
     placementPreview = null;
   }
 
@@ -387,6 +382,19 @@ export function bootstrapApp() {
     guidedScenePreview.mesh.geometry?.dispose?.();
     guidedScenePreview.mesh.material?.dispose?.();
     guidedScenePreview = null;
+  }
+
+  function disposePreviewRenderable(renderable) {
+    if (!renderable) return;
+    world.scene.remove(renderable);
+    renderable.traverse?.((child) => {
+      child.geometry?.dispose?.();
+      if (Array.isArray(child.material)) {
+        child.material.forEach((material) => material?.dispose?.());
+      } else {
+        child.material?.dispose?.();
+      }
+    });
   }
 
   function applyGuidedPreviewAppearance(mesh) {
@@ -524,6 +532,55 @@ export function bootstrapApp() {
     return marker;
   }
 
+  function buildLineEndMarker(color, point) {
+    const marker = new THREE.Mesh(
+      new THREE.SphereGeometry(0.045, 18, 14),
+      new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.78,
+      })
+    );
+    marker.position.copy(point);
+    return marker;
+  }
+
+  function buildLinePreviewGuide(color, start, end) {
+    const geometry = new THREE.BufferGeometry().setFromPoints([start.clone(), end.clone()]);
+    const material = new THREE.LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.92,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const guide = new THREE.Line(geometry, material);
+    guide.renderOrder = 16;
+    return guide;
+  }
+
+  function currentLineThickness() {
+    return placementPreview?.previewThickness || defaultParamsForShape("line").thickness;
+  }
+
+  function syncLinePreviewVisuals(startHit, endHit, color) {
+    if (!placementPreview?.guideLine || !startHit || !endHit) return;
+    const guideGeometry = placementPreview.guideLine.geometry;
+    guideGeometry.setFromPoints([startHit.clone(), endHit.clone()]);
+    guideGeometry.computeBoundingSphere?.();
+    placementPreview.guideLine.material.color.set(color);
+
+    if (placementPreview.pointMarker) {
+      placementPreview.pointMarker.material.color.set(color);
+      placementPreview.pointMarker.position.copy(startHit);
+      placementPreview.pointMarker.position.y = startHit.y + 0.015;
+    }
+    if (placementPreview.endMarker) {
+      placementPreview.endMarker.material.color.set(color);
+      placementPreview.endMarker.position.copy(endHit);
+    }
+  }
+
   function defaultLineEnd(startHit) {
     const endHit = startHit.clone();
     endHit.x += 0.28;
@@ -550,16 +607,17 @@ export function bootstrapApp() {
     return { start: fallbackStart, end: fallbackEnd };
   }
 
-  function applyLineEndpoints(mesh, startHit, endHit, size = Number(sizeInputEl?.value || 1)) {
+  function applyLineEndpoints(mesh, startHit, endHit, thickness = currentLineThickness()) {
     if (!mesh || !startHit || !endHit) return;
-    world.updateLineMesh(mesh, startHit, endHit, size);
+    const nextThickness = Math.max(0.02, Number(thickness || currentLineThickness()));
+    world.updateLineMesh(mesh, startHit, endHit, nextThickness);
     mesh.userData.lineStart = startHit.toArray();
     mesh.userData.lineEnd = endHit.toArray();
     mesh.userData.sceneParams = {
       ...(mesh.userData.sceneParams || {}),
       start: [...mesh.userData.lineStart],
       end: [...mesh.userData.lineEnd],
-      thickness: mesh.userData?.sceneParams?.thickness || Math.max(0.08, size * 0.08),
+      thickness: nextThickness,
     };
     mesh.userData.baseSize = paramsToBaseSize("line", mesh.userData.sceneParams);
   }
@@ -971,7 +1029,7 @@ export function bootstrapApp() {
         ? world.buildLineMesh(
           placementPreview?.lineStartHit || new THREE.Vector3(0, 0, 0),
           placementPreview?.lineEndHit || defaultLineEnd(placementPreview?.lineStartHit || new THREE.Vector3(0, 0, 0)),
-          Number(sizeInputEl.value),
+          currentLineThickness(),
           color
         )
         : world.buildMesh(shape, Number(sizeInputEl.value), color);
@@ -1014,12 +1072,25 @@ export function bootstrapApp() {
 
   function createGuidedLinePlacementPreview(template) {
     const mesh = buildMeshFromSceneObject(world, template.objectSpec);
+    const guideLine = buildLinePreviewGuide(
+      template.objectSpec.color,
+      new THREE.Vector3(...template.objectSpec.params.start),
+      new THREE.Vector3(...template.objectSpec.params.end)
+    );
+    const endMarker = buildLineEndMarker(
+      template.objectSpec.color,
+      new THREE.Vector3(...template.objectSpec.params.end)
+    );
     world.scene.add(mesh);
+    world.scene.add(guideLine);
+    world.scene.add(endMarker);
     placementPreview = {
       shape: "line",
       mesh,
       pointMarker: null,
-      previewSize: paramsToBaseSize("line", template.objectSpec.params),
+      guideLine,
+      endMarker,
+      previewThickness: template.objectSpec.params?.thickness || defaultParamsForShape("line").thickness,
       lineStartHit: new THREE.Vector3(...template.objectSpec.params.start),
       lineEndHit: new THREE.Vector3(...template.objectSpec.params.end),
       guidedLine: true,
@@ -1029,19 +1100,26 @@ export function bootstrapApp() {
       blockedBy: null,
     };
     syncPreviewMeshAppearance(mesh, "line", template.objectSpec.color, template.objectSpec);
+    syncLinePreviewVisuals(placementPreview.lineStartHit, placementPreview.lineEndHit, template.objectSpec.color);
     return placementPreview;
   }
 
-  function createLinePlacementPreview(startHit, startLandmark, nextColor, nextSize, floorLocked = true) {
-    const mesh = world.buildLineMesh(startHit, defaultLineEnd(startHit), nextSize, nextColor);
+  function createLinePlacementPreview(startHit, startLandmark, nextColor, nextThickness, floorLocked = true) {
+    const mesh = world.buildLineMesh(startHit, defaultLineEnd(startHit), nextThickness, nextColor);
     const pointMarker = buildLinePointMarker(nextColor, startHit);
+    const guideLine = buildLinePreviewGuide(nextColor, startHit, defaultLineEnd(startHit));
+    const endMarker = buildLineEndMarker(nextColor, defaultLineEnd(startHit));
     world.scene.add(mesh);
     world.scene.add(pointMarker);
+    world.scene.add(guideLine);
+    world.scene.add(endMarker);
     placementPreview = {
       shape: "line",
       mesh,
       pointMarker,
-      previewSize: nextSize,
+      guideLine,
+      endMarker,
+      previewThickness: nextThickness,
       lineStartHit: startHit.clone(),
       lineStartLandmark: cloneLandmark(startLandmark),
       lineEndHit: null,
@@ -1049,7 +1127,12 @@ export function bootstrapApp() {
       floorLocked,
     };
     syncPreviewMeshAppearance(mesh, "line", nextColor);
-    applyLineEndpoints(mesh, placementPreview.lineStartHit, defaultLineEnd(placementPreview.lineStartHit), nextSize);
+    applyLineEndpoints(mesh, placementPreview.lineStartHit, defaultLineEnd(placementPreview.lineStartHit), nextThickness);
+    syncLinePreviewVisuals(
+      placementPreview.lineStartHit,
+      defaultLineEnd(placementPreview.lineStartHit),
+      nextColor
+    );
     return placementPreview;
   }
 
@@ -1073,7 +1156,7 @@ export function bootstrapApp() {
     }
 
     const nextColor = colorInputEl.value;
-    const nextSize = Number(sizeInputEl.value);
+    const nextThickness = currentLineThickness();
     const previewTarget = placementPreview?.shape === "line"
       ? resolvePlacementTarget(hitPoint, placementPreview.floorLocked)
       : resolvePlacementTarget(hitPoint);
@@ -1081,29 +1164,23 @@ export function bootstrapApp() {
     if (!placementPreview?.mesh || placementPreview.shape !== "line") {
       const startHit = normalizeLineAnchor(previewTarget);
       if (!startHit || !contactLandmark) return null;
-      return createLinePlacementPreview(
-        startHit,
-        contactLandmark,
-        nextColor,
-        nextSize,
-        previewTarget?.floorLocked !== false
-      );
+        return createLinePlacementPreview(
+          startHit,
+          contactLandmark,
+          nextColor,
+          nextThickness,
+          previewTarget?.floorLocked !== false
+        );
     }
 
-    if (placementPreview.previewSize !== nextSize) {
+    if (placementPreview.previewThickness !== nextThickness) {
       const savedStartHit = placementPreview.lineStartHit.clone();
       const savedStartLandmark = cloneLandmark(placementPreview.lineStartLandmark);
       const savedEndHit = placementPreview.lineEndHit?.clone?.() || null;
       const savedFloorLocked = placementPreview.floorLocked !== false;
       disposePlacementPreview();
-      createLinePlacementPreview(savedStartHit, savedStartLandmark, nextColor, nextSize, savedFloorLocked);
+      createLinePlacementPreview(savedStartHit, savedStartLandmark, nextColor, nextThickness, savedFloorLocked);
       placementPreview.lineEndHit = savedEndHit;
-    }
-
-    if (placementPreview.pointMarker) {
-      placementPreview.pointMarker.material.color.set(nextColor);
-      placementPreview.pointMarker.position.copy(placementPreview.lineStartHit);
-      placementPreview.pointMarker.position.y = placementPreview.lineStartHit.y + 0.015;
     }
 
     if (hitPoint && contactLandmark) {
@@ -1120,8 +1197,9 @@ export function bootstrapApp() {
 
     syncPreviewMeshAppearance(placementPreview.mesh, "line", nextColor);
     const renderEnd = placementPreview.lineEndHit || defaultLineEnd(placementPreview.lineStartHit);
-    applyLineEndpoints(placementPreview.mesh, placementPreview.lineStartHit, renderEnd, nextSize);
-    placementPreview.previewSize = nextSize;
+    applyLineEndpoints(placementPreview.mesh, placementPreview.lineStartHit, renderEnd, nextThickness);
+    syncLinePreviewVisuals(placementPreview.lineStartHit, renderEnd, nextColor);
+    placementPreview.previewThickness = nextThickness;
     return placementPreview;
   }
 
@@ -1211,7 +1289,7 @@ export function bootstrapApp() {
           : {
             start: placementPreview.lineStartHit.toArray(),
             end: placementPreview.lineEndHit.toArray(),
-            thickness: previewObject.params?.thickness || Math.max(0.08, Number(sizeInputEl.value) * 0.08),
+            thickness: placementPreview.previewThickness || previewObject.params?.thickness || defaultParamsForShape("line").thickness,
           },
       })
       : normalizeSceneObject({
@@ -2367,7 +2445,7 @@ export function bootstrapApp() {
             ? {
               start: lineEndpoints.start.toArray(),
               end: lineEndpoints.end.toArray(),
-              thickness: Math.max(0.08, currentSize * 0.08),
+              thickness: currentObject.params?.thickness || defaultParamsForShape("line").thickness,
             }
             : baseSizeToParams(shape, currentSize)
         ),
@@ -2691,7 +2769,7 @@ export function bootstrapApp() {
       return {
         start: endpoints ? endpoints.start.toArray() : [0, 0.03, 0],
         end: endpoints ? endpoints.end.toArray() : [size, 0.03, 0],
-        thickness: Math.max(0.08, size * 0.08),
+        thickness: mesh?.userData?.sceneParams?.thickness || defaultParamsForShape("line").thickness,
       };
     }
     if (shape === "cube") return { size };

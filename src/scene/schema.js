@@ -248,7 +248,7 @@ export function baseSizeToParams(shape, baseSize = 1) {
     case "plane":
       return { width: size * 2, depth: size * 2 };
     case "line":
-      return { start: [0, 0.03, 0], end: [size, 0.03, 0], thickness: Math.max(0.08, size * 0.08) };
+      return { start: [0, 0.03, 0], end: [size, 0.03, 0], thickness: DEFAULT_SPAWN_PARAMS.line.thickness };
     case "pointMarker":
       return { radius: Math.max(0.08, size * 0.08) };
     default:

@@ -148,8 +148,8 @@ export function createWorld(container) {
     return material;
   }
 
-  function lineRadius(size = 1) {
-    return Math.max(0.012, Number(size || 1) * 0.22);
+  function lineRadius(thickness = 0.08) {
+    return Math.max(0.012, Number(thickness || 0.08) * 0.22);
   }
 
   function normalizeLineEndpoints(start, end) {
@@ -161,11 +161,11 @@ export function createWorld(container) {
     return { from, to };
   }
 
-  function applyLineTransform(mesh, start, end, size = 1) {
+  function applyLineTransform(mesh, start, end, thickness = 0.08) {
     const { from, to } = normalizeLineEndpoints(start, end);
     const delta = to.clone().sub(from);
     const length = Math.max(0.02, delta.length());
-    const radius = lineRadius(size);
+    const radius = lineRadius(thickness);
     const nextGeometry = new THREE.CylinderGeometry(radius, radius, length, 18);
     const midpoint = from.clone().lerp(to, 0.5);
     const direction = delta.normalize();
@@ -302,17 +302,17 @@ export function createWorld(container) {
     return mesh;
   }
 
-  function buildLineMesh(start, end, size, color) {
+  function buildLineMesh(start, end, thickness, color) {
     const mesh = new THREE.Mesh(
-      new THREE.CylinderGeometry(lineRadius(size), lineRadius(size), 0.02, 18),
+      new THREE.CylinderGeometry(lineRadius(thickness), lineRadius(thickness), 0.02, 18),
       buildMaterial(color)
     );
-    applyLineTransform(mesh, start, end, size);
+    applyLineTransform(mesh, start, end, thickness);
     return mesh;
   }
 
-  function updateLineMesh(mesh, start, end, size) {
-    applyLineTransform(mesh, start, end, size);
+  function updateLineMesh(mesh, start, end, thickness) {
+    applyLineTransform(mesh, start, end, thickness);
     return mesh;
   }
 
