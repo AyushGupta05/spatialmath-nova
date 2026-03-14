@@ -2,6 +2,7 @@ import { buildSceneSnapshotFromSuggestions } from "../../src/ai/planSchema.js";
 import { computeGeometry } from "../../src/core/geometry.js";
 import { normalizeSceneObject, normalizeSceneSnapshot } from "../../src/scene/schema.js";
 import { buildAnalyticPlan } from "./plan/analytic.js";
+import { buildElectricFieldPlan } from "./plan/electricField.js";
 import { cleanupJson } from "./plan/shared.js";
 import { converseWithModelFailover } from "./modelInvoker.js";
 import { hasAwsCredentials } from "./modelRouter.js";
@@ -409,6 +410,37 @@ function looksLikeShowcaseRequest(userMessage = "") {
 function heuristicSceneCommand(userMessage = "", sceneSnapshot = {}, sceneContext = {}, learningState = {}) {
   const lower = String(userMessage || "").toLowerCase();
   const selection = selectedObjectSummary(sceneSnapshot, sceneContext);
+  const electricFieldPlan = buildElectricFieldPlan(userMessage, {
+    cleanedQuestion: userMessage,
+    inputMode: "text",
+  });
+
+  if (electricFieldPlan) {
+    const electricSnapshot = buildSceneSnapshotFromSuggestions(electricFieldPlan);
+    const focusTargets = electricFieldPlan.objectSuggestions
+      .map((suggestion) => suggestion.object.id)
+      .filter(Boolean);
+    return {
+      text: electricFieldPlan.sceneFocus?.primaryInsight || "I loaded a live electric-field scene. Drag the charged objects and watch the field react.",
+      sceneCommand: {
+        summary: `Load ${electricFieldPlan.problem?.id || "electric-field"} showcase`,
+        operations: [
+          {
+            kind: "replace_scene",
+            objects: ensureCommandObjectIds(electricSnapshot.objects || [], electricFieldPlan.problem?.id || "electric-field"),
+            selectedObjectId: focusTargets[0] || null,
+          },
+          {
+            kind: "focus_objects",
+            targetIds: focusTargets,
+          },
+          {
+            kind: "reset_view",
+          },
+        ],
+      },
+    };
+  }
 
   if (looksLikeShowcaseRequest(userMessage)) {
     const showcases = buildShowcases();

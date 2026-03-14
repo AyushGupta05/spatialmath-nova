@@ -10,6 +10,9 @@ export function sceneRoles(objectSpec = {}) {
 
 export function sceneObjectBaseOpacity(objectSpec) {
   const spec = normalizeSceneObject(objectSpec);
+  if (spec.metadata?.physics?.kind === "flux_surface") {
+    return 0.18;
+  }
   if (spec.shape === "plane") {
     const roles = sceneRoles(spec);
     const isReferencePlane = roles.has("plane")

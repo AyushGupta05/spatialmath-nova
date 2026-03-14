@@ -38,6 +38,15 @@ const EXEMPLARS = [
     scriptBeat: "Use one shared scene to compare competing solids, make a prediction, and check the result through direct manipulation.",
     tags: ["comparison", "prediction", "scene-feedback"],
   },
+  {
+    id: "electric-field-playground",
+    title: "Electric field playground",
+    question: "A learner drags charged objects in a 3D scene and watches electric-field arrows, flow particles, and flux cues react live.",
+    summary: "Best for showing a focused physics extension that still fits Nova Prism's visual tutoring story.",
+    recommendedCategory: "Creativity and Innovation",
+    scriptBeat: "Move a charge, watch the field reorganize instantly, then use the same scene to explain dipoles or Gaussian flux.",
+    tags: ["physics", "electric-field", "dipole", "flux", "calculus"],
+  },
 ];
 
 const embeddingCache = new Map();

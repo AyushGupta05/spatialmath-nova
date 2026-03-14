@@ -14,6 +14,7 @@ import { computeGeometry } from "../core/geometry.js";
 import { initLabelRenderer, renderLabels, addLabel, clearLabels } from "../render/labels.js";
 import { AnalyticOverlayManager } from "../render/analyticOverlayManager.js";
 import { CameraDirector } from "../render/cameraDirector.js";
+import { ElectricFieldManager } from "../render/electricFieldManager.js";
 import { supports2dCompanionShape } from "../ai/representationMode.js";
 import { tutorState } from "../state/tutorState.js";
 import { initUnfoldDrawer, setUnfoldRepresentationMode, syncUnfoldDrawer } from "./unfoldDrawer.js";
@@ -44,6 +45,7 @@ let voiceHoldRequested = false;
 let lastAnnouncedStageKey = null;
 let lastCheckpointKey = null;
 let analyticOverlayManager = null;
+let electricFieldManager = null;
 let analyticFormulaVisible = false;
 let analyticFullSolutionVisible = false;
 let analyticFormulaDismissed = false;
@@ -2140,6 +2142,7 @@ export function initTutorController(context) {
   sceneApi = context.sceneApi;
   cameraDirector = new CameraDirector(world.camera, world.controls);
   analyticOverlayManager = new AnalyticOverlayManager(world, sceneApi);
+  electricFieldManager = new ElectricFieldManager(world, sceneApi);
 
   stageWrapEl = document.querySelector(".stage-wrap");
   if (stageWrapEl) {
@@ -2190,5 +2193,6 @@ export function updateTutorLabels() {
   if (world) {
     renderLabels(world.scene, world.camera);
   }
+  electricFieldManager?.update();
   syncUnfoldDrawer();
 }

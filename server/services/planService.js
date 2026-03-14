@@ -6,6 +6,7 @@ import { buildSourceEvidence } from "./plan/sourceEvidence.js";
 import { buildDemoPreset } from "./plan/demoPreset.js";
 import { retrieveLessonExemplar } from "./plan/retrieval.js";
 import { buildAnalyticPlan } from "./plan/analytic.js";
+import { buildElectricFieldPlan } from "./plan/electricField.js";
 
 export function buildAnalyticPlannerInput({ questionText = "", sourceSummary = {} }) {
   const rawQuestion = String(questionText || sourceSummary.rawQuestion || "").trim();
@@ -48,7 +49,7 @@ export function buildAnalyticPlannerInput({ questionText = "", sourceSummary = {
   };
 }
 
-function buildAgentTrace({ sourceSummary, retrieval, usedNovaPlan, usedAnalyticPlan }) {
+function buildAgentTrace({ sourceSummary, retrieval, usedNovaPlan, usedAnalyticPlan, usedElectricFieldPlan }) {
   return [
     {
       id: "source-interpreter",
@@ -60,9 +61,11 @@ function buildAgentTrace({ sourceSummary, retrieval, usedNovaPlan, usedAnalyticP
     },
     {
       id: "lesson-planner",
-      label: usedAnalyticPlan ? "Analytic Solver" : "Lesson Planner",
-      status: usedAnalyticPlan ? "deterministic" : usedNovaPlan ? "nova" : "fallback",
-      summary: usedAnalyticPlan
+      label: usedElectricFieldPlan ? "Physics Planner" : usedAnalyticPlan ? "Analytic Solver" : "Lesson Planner",
+      status: usedElectricFieldPlan ? "physics" : usedAnalyticPlan ? "deterministic" : usedNovaPlan ? "nova" : "fallback",
+      summary: usedElectricFieldPlan
+        ? "Used the focused electromagnetism planner for charged objects, live field flow, and flux intuition."
+        : usedAnalyticPlan
         ? "Used the deterministic analytic geometry planner for reliable formulas, helpers, and scene beats."
         : usedNovaPlan
           ? "Used Nova planning with retrieval-informed lesson scaffolding."
@@ -91,12 +94,14 @@ export async function generateScenePlan({ questionText = "", imageAsset = null, 
   const retrieval = await retrieveLessonExemplar({ questionText: workingQuestion, sourceSummary });
   let usedNovaPlan = false;
   const analyticInput = buildAnalyticPlannerInput({ questionText, sourceSummary });
+  const electricFieldPlan = buildElectricFieldPlan(workingQuestion, sourceSummary);
   const analyticPlan = buildAnalyticPlan(analyticInput.questionText, analyticInput.sourceSummary);
+  const usedElectricFieldPlan = Boolean(electricFieldPlan);
   const usedAnalyticPlan = Boolean(analyticPlan);
-  const baselinePlan = analyticPlan || heuristicPlan(workingQuestion, mode, sourceSummary);
+  const baselinePlan = electricFieldPlan || analyticPlan || heuristicPlan(workingQuestion, mode, sourceSummary);
   let mergedPlan = baselinePlan;
 
-  if (!usedAnalyticPlan) {
+  if (!usedAnalyticPlan && !usedElectricFieldPlan) {
     try {
       const novaPlan = await planFromNova({
         questionText: workingQuestion,
@@ -129,6 +134,7 @@ export async function generateScenePlan({ questionText = "", imageAsset = null, 
     retrieval,
     usedNovaPlan,
     usedAnalyticPlan,
+    usedElectricFieldPlan,
   });
 
   const scenePlan = {
