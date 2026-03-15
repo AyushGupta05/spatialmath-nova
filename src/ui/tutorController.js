@@ -5,6 +5,7 @@ import {
   requestSimilarTutorQuestions,
   appendVoiceSessionAudio,
   createVoiceSession,
+  interruptVoiceSessionTurn,
   startVoiceSessionTurn,
   stopVoiceSessionTurn,
   subscribeToVoiceSession,
@@ -38,13 +39,18 @@ let questionImageFile = null;
 let questionImagePreviewUrl = null;
 let lastSceneFeedback = "Nova Prism will react to what you do in the scene.";
 let voiceConversationId = null;
-let voiceRecording = false;
 let activeMicCapture = null;
+let voiceModeTogglePromise = null;
+let voiceTurnStartPromise = null;
 let voiceSessionUnsubscribe = null;
 let voiceAudioUploadChain = Promise.resolve();
 let voiceStreamDraft = null;
 let voiceAudioPlayer = null;
-let voiceHoldRequested = false;
+let voiceModeEnabled = false;
+let voiceTurnOpen = false;
+let voiceUserSpeaking = false;
+let voiceSessionState = "idle";
+let voiceBufferedChunks = [];
 let lastAnnouncedStageKey = null;
 let lastCheckpointKey = null;
 let analyticOverlayManager = null;
@@ -325,6 +331,15 @@ function updateVoiceStatus(text = "", tone = "muted") {
   if (tone === "error") voiceStatus.style.color = "var(--danger)";
 }
 
+function setVoiceButtonState({ active = voiceModeEnabled, disabled = false } = {}) {
+  if (!voiceRecordBtn) return;
+  voiceRecordBtn.disabled = disabled;
+  voiceRecordBtn.classList.toggle("is-recording", active);
+  voiceRecordBtn.textContent = active ? "\u25A0" : "\u{1F3A4}";
+  voiceRecordBtn.setAttribute("aria-pressed", String(active));
+  voiceRecordBtn.setAttribute("aria-label", active ? "Turn voice mode off" : "Turn voice mode on");
+}
+
 function ensureVoiceAudioPlayer() {
   if (!voiceAudioPlayer) {
     voiceAudioPlayer = new PcmAudioPlayer({ sampleRate: 24000 });
@@ -345,6 +360,18 @@ function resetVoiceDraft() {
 
 function currentVoiceDraft() {
   return voiceStreamDraft || resetVoiceDraft();
+}
+
+function rememberVoiceBufferedChunk(chunk) {
+  if (!chunk?.audioBase64) return;
+  voiceBufferedChunks.push(chunk);
+  if (voiceBufferedChunks.length > 4) {
+    voiceBufferedChunks = voiceBufferedChunks.slice(-4);
+  }
+}
+
+function clearVoiceBufferedChunks() {
+  voiceBufferedChunks = [];
 }
 
 function setVoiceTranscript(content = "") {
@@ -389,14 +416,18 @@ async function resetVoiceSessionState() {
   voiceConversationId = null;
   voiceStreamDraft = null;
   voiceAudioUploadChain = Promise.resolve();
-  voiceHoldRequested = false;
+  voiceModeTogglePromise = null;
+  voiceTurnStartPromise = null;
+  voiceModeEnabled = false;
+  voiceTurnOpen = false;
+  voiceUserSpeaking = false;
+  voiceSessionState = "idle";
+  clearVoiceBufferedChunks();
   if (activeMicCapture) {
     await activeMicCapture.stop();
     activeMicCapture = null;
   }
-  voiceRecording = false;
-  voiceRecordBtn?.classList.remove("is-recording");
-  if (voiceRecordBtn) voiceRecordBtn.textContent = "\u{1F3A4}";
+  setVoiceButtonState({ active: false });
   if (voiceAudioPlayer) {
     voiceAudioPlayer.stop();
   }
@@ -696,7 +727,7 @@ function updateComposerState() {
     }
   }
   if (chatSend) chatSend.disabled = false;
-  if (voiceRecordBtn) voiceRecordBtn.disabled = false;
+  setVoiceButtonState({ active: voiceModeEnabled, disabled: false });
 }
 
 function setCheckpointState(checkpoint = null) {
@@ -1464,6 +1495,80 @@ function syncStepFromTutorResponse(response = {}, plan = activePlan()) {
   }
 }
 
+function applyVoiceTurnResult(response = {}, plan = activePlan()) {
+  const draft = voiceStreamDraft;
+  const inputTranscript = String(response.inputTranscript || "").trim();
+  const assistantText = String(response.assistantText || "").trim();
+
+  if (inputTranscript) {
+    tutorState.addMessage("user", inputTranscript);
+  }
+  if (assistantText) {
+    tutorState.addMessage("assistant", assistantText);
+  }
+
+  syncStepFromTutorResponse(response, plan);
+
+  if (response.conceptVerdict) {
+    tutorState.addVerdict({
+      stage: tutorState.learningStage,
+      stageGoal: response.conceptVerdict.stageGoal || "",
+      verdict: response.conceptVerdict.verdict,
+      what_was_right: response.conceptVerdict.what_was_right,
+      gap: response.conceptVerdict.gap,
+      misconception_type: response.conceptVerdict.misconception_type,
+    });
+  }
+
+  if (response.assessment) {
+    tutorState.setAssessment(response.assessment);
+  } else if (!plan) {
+    tutorState.setAssessment(null);
+  } else {
+    void syncAssessment();
+  }
+
+  if (response.completionState?.complete) {
+    completeLesson({
+      reason: response.completionState.reason || "correct-answer",
+      revealSolution: response.completionState.reason === "revealed-solution" || Boolean(response.sceneDirective?.revealFullSolution),
+    });
+  }
+
+  const actions = response.actions?.length
+    ? response.actions
+    : plan
+      ? stageActionsForClient(plan, tutorState.latestAssessment)
+      : [];
+  if (draft?.assistantMessage) {
+    draft.assistantMessage.dataset.completion = response.completionState?.complete ? "true" : "false";
+    renderMessageActions(draft.assistantMessage, actions);
+  }
+
+  if (response.focusTargets?.length) {
+    focusStageTargets(response.focusTargets, { selectFirst: true });
+  }
+  if (response.checkpoint && !isLessonComplete()) {
+    setCheckpointState(response.checkpoint);
+  } else if (!plan || isLessonComplete()) {
+    setCheckpointState(null);
+  }
+  if (response.sceneDirective) {
+    applySceneDirective(response.sceneDirective, { forceCamera: true });
+  }
+  if (response.sceneCommand) {
+    applyAssistantSceneCommand(response.sceneCommand);
+  }
+
+  lastSceneFeedback = assistantText || lastSceneFeedback;
+  renderAssessment(plan ? tutorState.latestAssessment : null);
+  renderSceneInfo();
+  updateStageRail();
+  if (plan && !isLessonComplete()) {
+    announceCurrentStage();
+  }
+}
+
 async function sendTutorMessage(messageText, options = {}) {
   const plan = activePlan();
   const text = messageText?.trim();
@@ -1624,20 +1729,35 @@ function buildVoiceContext(plan = activePlan()) {
   };
 }
 
+function standbyVoiceStatus() {
+  return voiceModeEnabled ? "Voice mode on. Start speaking any time." : "";
+}
+
+function setVoiceStatusForState(state = voiceSessionState) {
+  if (state === "connecting") {
+    updateVoiceStatus("Connecting voice session...", "ready");
+    return;
+  }
+  if (state === "listening") {
+    updateVoiceStatus("Listening...", "ready");
+    return;
+  }
+  if (state === "processing") {
+    updateVoiceStatus("Thinking...", "ready");
+    return;
+  }
+  if (state === "responding") {
+    updateVoiceStatus("Replying...", "ready");
+    return;
+  }
+  updateVoiceStatus(standbyVoiceStatus(), voiceModeEnabled ? "ready" : "hidden");
+}
+
 function handleVoiceSessionEvent(event = {}) {
   switch (event.type) {
     case "state":
-      if (event.state === "connecting") {
-        updateVoiceStatus("Connecting voice session...", "ready");
-      } else if (event.state === "listening") {
-        updateVoiceStatus("Listening... release when you're done.", "ready");
-      } else if (event.state === "processing") {
-        updateVoiceStatus("Thinking...", "ready");
-      } else if (event.state === "responding") {
-        updateVoiceStatus("Replying...", "ready");
-      } else if (event.state === "idle") {
-        updateVoiceStatus("", "hidden");
-      }
+      voiceSessionState = event.state || "idle";
+      setVoiceStatusForState(voiceSessionState);
       return;
     case "input_transcript":
       setVoiceTranscript(event.content || "");
@@ -1654,6 +1774,12 @@ function handleVoiceSessionEvent(event = {}) {
           console.error("Voice audio playback failed:", error);
         });
       return;
+    case "interrupted":
+      voiceTurnOpen = false;
+      voiceUserSpeaking = false;
+      ensureVoiceAudioPlayer().stop();
+      setVoiceStatusForState("idle");
+      return;
     case "done":
       if (event.inputTranscript) {
         setVoiceTranscript(event.inputTranscript);
@@ -1662,14 +1788,11 @@ function handleVoiceSessionEvent(event = {}) {
         final: true,
       });
       voiceConversationId = event.conversationId || voiceConversationId;
-      syncAssessment();
+      voiceTurnOpen = false;
+      voiceUserSpeaking = false;
+      applyVoiceTurnResult(event);
       voiceStreamDraft = null;
-      if (event.fallbackUsed) {
-        updateVoiceStatus("Voice replied in captions.", "ready");
-        window.setTimeout(() => updateVoiceStatus("", "hidden"), 1400);
-      } else {
-        updateVoiceStatus("", "hidden");
-      }
+      setVoiceStatusForState("idle");
       return;
     default:
       return;
@@ -1690,7 +1813,7 @@ async function ensureVoiceSessionConnected() {
     onEvent: handleVoiceSessionEvent,
     onError: (error) => {
       console.error("Voice session stream error:", error);
-      updateVoiceStatus("Voice session disconnected. Hold the mic to reconnect.", "error");
+      updateVoiceStatus("Voice session disconnected. Click the mic to reconnect.", "error");
       closeVoiceSessionStream();
     },
   });
@@ -1698,7 +1821,11 @@ async function ensureVoiceSessionConnected() {
 }
 
 function queueVoiceAudioChunk(chunk) {
-  if (!voiceConversationId || !chunk?.audioBase64) {
+  if (!chunk?.audioBase64) {
+    return;
+  }
+  if (!voiceConversationId || !voiceTurnOpen || !voiceUserSpeaking) {
+    rememberVoiceBufferedChunk(chunk);
     return;
   }
   voiceAudioUploadChain = voiceAudioUploadChain
@@ -1713,72 +1840,185 @@ function queueVoiceAudioChunk(chunk) {
     });
 }
 
-async function finishVoiceCapture() {
-  if (!activeMicCapture) return;
-  const capture = activeMicCapture;
-  activeMicCapture = null;
-  voiceRecording = false;
-  voiceRecordBtn?.classList.remove("is-recording");
-  if (voiceRecordBtn) voiceRecordBtn.textContent = "\u{1F3A4}";
-  updateVoiceStatus("Thinking...", "ready");
+async function flushBufferedVoiceAudio() {
+  const bufferedChunks = [...voiceBufferedChunks];
+  clearVoiceBufferedChunks();
+  for (const chunk of bufferedChunks) {
+    queueVoiceAudioChunk(chunk);
+  }
+  await voiceAudioUploadChain;
+}
 
+async function interruptActiveVoiceTurn() {
+  if (!voiceConversationId || !voiceTurnOpen) {
+    return;
+  }
+  voiceTurnOpen = false;
+  voiceUserSpeaking = false;
+  clearVoiceBufferedChunks();
+  ensureVoiceAudioPlayer().stop();
   try {
-    await capture.finish();
-    await voiceAudioUploadChain;
-    if (voiceConversationId) {
-      await stopVoiceSessionTurn(voiceConversationId);
-    }
+    await interruptVoiceSessionTurn(voiceConversationId);
   } catch (error) {
-    console.error("Voice capture failed:", error);
+    console.error("Voice interrupt failed:", error);
     updateVoiceStatus(`Voice error: ${error.message}`, "error");
   }
 }
 
-async function startVoiceCapture() {
-  if (voiceRecording) return;
+async function startVoiceConversationTurn() {
+  if (voiceTurnOpen) return;
+  if (voiceTurnStartPromise) {
+    await voiceTurnStartPromise.catch(() => {});
+    return;
+  }
+
+  voiceTurnStartPromise = (async () => {
+    try {
+      const sessionId = await ensureVoiceSessionConnected();
+      resetVoiceDraft();
+      voiceAudioUploadChain = Promise.resolve();
+      const sessionStart = await startVoiceSessionTurn({
+        sessionId,
+        mode: "coach",
+        context: buildVoiceContext(),
+        playbackMode: "auto",
+      });
+      if (sessionStart.fallbackUsed) {
+        updateVoiceStatus("Voice replied in captions.", "ready");
+        return;
+      }
+      voiceTurnOpen = true;
+      await flushBufferedVoiceAudio();
+      updateVoiceStatus("Listening...", "ready");
+    } catch (error) {
+      console.error("Voice turn start failed:", error);
+      updateVoiceStatus(`Voice error: ${error.message}`, "error");
+      voiceTurnOpen = false;
+    } finally {
+      voiceTurnStartPromise = null;
+    }
+  })();
+
+  await voiceTurnStartPromise;
+}
+
+async function handleVoiceSpeechStart() {
+  if (!voiceModeEnabled || voiceUserSpeaking) return;
+  voiceUserSpeaking = true;
+  ensureVoiceAudioPlayer().stop();
+  if (voiceTurnOpen && voiceSessionState !== "listening") {
+    await interruptActiveVoiceTurn();
+  }
+  await startVoiceConversationTurn();
+}
+
+async function handleVoiceSpeechEnd() {
+  if (!voiceUserSpeaking) return;
+  voiceUserSpeaking = false;
+  if (voiceTurnStartPromise) {
+    await voiceTurnStartPromise.catch(() => {});
+  }
+  if (!voiceTurnOpen || !voiceConversationId) {
+    return;
+  }
+  updateVoiceStatus("Thinking...", "ready");
+  try {
+    await voiceAudioUploadChain;
+    await stopVoiceSessionTurn(voiceConversationId);
+  } catch (error) {
+    console.error("Voice turn stop failed:", error);
+    updateVoiceStatus(`Voice error: ${error.message}`, "error");
+  }
+}
+
+async function enableVoiceMode() {
+  if (voiceModeEnabled) return;
   if (!navigator.mediaDevices?.getUserMedia) {
     updateVoiceStatus("This browser cannot capture microphone audio.", "error");
     return;
   }
 
   try {
-    const sessionId = await ensureVoiceSessionConnected();
-    resetVoiceDraft();
-    ensureVoiceAudioPlayer().stop();
-    const sessionStart = await startVoiceSessionTurn({
-      sessionId,
-      mode: "coach",
-      context: buildVoiceContext(),
-      playbackMode: "auto",
+    await ensureVoiceSessionConnected();
+    voiceModeEnabled = true;
+    activeMicCapture = new MicrophoneCapture({
+      onChunk: queueVoiceAudioChunk,
+      onSpeechStart: () => {
+        void handleVoiceSpeechStart();
+      },
+      onSpeechEnd: () => {
+        void handleVoiceSpeechEnd();
+      },
+      collectChunks: false,
     });
-
-    if (sessionStart.fallbackUsed) {
-      updateVoiceStatus("Voice replied in captions.", "ready");
-      return;
-    }
-
-    voiceAudioUploadChain = Promise.resolve();
-    activeMicCapture = new MicrophoneCapture({ onChunk: queueVoiceAudioChunk });
-    await activeMicCapture.start({ onChunk: queueVoiceAudioChunk });
-    voiceRecording = true;
-    if (voiceRecordBtn) {
-      voiceRecordBtn.classList.add("is-recording");
-      voiceRecordBtn.textContent = "\u25A0";
-    }
-    updateVoiceStatus("Listening... release when you're done.", "ready");
-    if (!voiceHoldRequested) {
-      await stopVoiceCapture();
-    }
+    await activeMicCapture.start({
+      onChunk: queueVoiceAudioChunk,
+      onSpeechStart: () => {
+        void handleVoiceSpeechStart();
+      },
+      onSpeechEnd: () => {
+        void handleVoiceSpeechEnd();
+      },
+      collectChunks: false,
+    });
+    setVoiceButtonState({ active: true });
+    setVoiceStatusForState("idle");
   } catch (error) {
-    console.error("Microphone start failed:", error);
+    console.error("Voice mode start failed:", error);
+    voiceModeEnabled = false;
+    if (activeMicCapture) {
+      await activeMicCapture.stop().catch(() => {});
+      activeMicCapture = null;
+    }
     updateVoiceStatus(`Voice error: ${error.message}`, "error");
+    setVoiceButtonState({ active: false });
   }
 }
 
-async function stopVoiceCapture() {
-  voiceHoldRequested = false;
-  if (!voiceRecording) return;
-  await finishVoiceCapture();
+async function disableVoiceMode() {
+  voiceModeEnabled = false;
+  voiceUserSpeaking = false;
+  voiceSessionState = "idle";
+  clearVoiceBufferedChunks();
+  if (activeMicCapture) {
+    await activeMicCapture.stop().catch(() => {});
+    activeMicCapture = null;
+  }
+  ensureVoiceAudioPlayer().stop();
+
+  if (voiceTurnStartPromise) {
+    await voiceTurnStartPromise.catch(() => {});
+  }
+  if (voiceTurnOpen && voiceConversationId) {
+    if (voiceSessionState === "listening") {
+      try {
+        await stopVoiceSessionTurn(voiceConversationId);
+      } catch (error) {
+        console.error("Voice stop on mode exit failed:", error);
+      }
+    } else {
+      await interruptActiveVoiceTurn();
+    }
+  }
+
+  voiceTurnOpen = false;
+  closeVoiceSessionStream();
+  setVoiceButtonState({ active: false });
+  updateVoiceStatus("", "hidden");
+}
+
+async function toggleVoiceMode() {
+  if (voiceModeTogglePromise) {
+    await voiceModeTogglePromise.catch(() => {});
+    return;
+  }
+  setVoiceButtonState({ active: voiceModeEnabled, disabled: true });
+  voiceModeTogglePromise = (voiceModeEnabled ? disableVoiceMode() : enableVoiceMode())
+    .finally(() => {
+      voiceModeTogglePromise = null;
+      setVoiceButtonState({ active: voiceModeEnabled, disabled: false });
+    });
+  await voiceModeTogglePromise;
 }
 
 function advanceLessonStage() {
@@ -2100,35 +2340,14 @@ function bindEvents() {
     const isCollapsed = questionSection?.classList.contains("is-collapsed");
     setQuestionPanelCollapsed(!isCollapsed, { force: true });
   });
-  voiceRecordBtn?.addEventListener("pointerdown", (event) => {
+  voiceRecordBtn?.addEventListener("click", (event) => {
     event.preventDefault();
-    voiceHoldRequested = true;
-    voiceRecordBtn?.setPointerCapture?.(event.pointerId);
-    startVoiceCapture();
-  });
-  voiceRecordBtn?.addEventListener("pointerup", (event) => {
-    event.preventDefault();
-    stopVoiceCapture();
-  });
-  voiceRecordBtn?.addEventListener("pointercancel", () => {
-    stopVoiceCapture();
-  });
-  voiceRecordBtn?.addEventListener("pointerleave", () => {
-    if (voiceRecording) {
-      stopVoiceCapture();
-    }
+    void toggleVoiceMode();
   });
   voiceRecordBtn?.addEventListener("keydown", (event) => {
     if ((event.key === " " || event.key === "Enter") && !event.repeat) {
       event.preventDefault();
-      voiceHoldRequested = true;
-      startVoiceCapture();
-    }
-  });
-  voiceRecordBtn?.addEventListener("keyup", (event) => {
-    if (event.key === " " || event.key === "Enter") {
-      event.preventDefault();
-      stopVoiceCapture();
+      void toggleVoiceMode();
     }
   });
   chatSend?.addEventListener("click", handleComposerSubmit);

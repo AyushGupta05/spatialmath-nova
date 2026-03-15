@@ -26,14 +26,34 @@ export class MicrophoneCapture {
     this.processor = null;
     this.chunks = [];
     this.onChunk = options.onChunk || null;
+    this.onSpeechStart = options.onSpeechStart || null;
+    this.onSpeechEnd = options.onSpeechEnd || null;
+    this.onLevel = options.onLevel || null;
     this.bufferSize = options.bufferSize || 4096;
+    this.collectChunks = Boolean(options.collectChunks);
     this.mimeType = "audio/lpcm;rate=16000;channels=1;sampleSizeBits=16";
+    this.startThreshold = Number(options.startThreshold ?? 0.024);
+    this.stopThreshold = Number(options.stopThreshold ?? 0.014);
+    this.minSpeechFrames = Math.max(1, Number(options.minSpeechFrames ?? 2));
+    this.silenceDurationMs = Math.max(120, Number(options.silenceDurationMs ?? 700));
+    this.smoothedLevel = 0;
+    this.lastVoiceAt = 0;
+    this.aboveThresholdFrames = 0;
+    this.isSpeaking = false;
   }
 
   async start(options = {}) {
-    this.stop();
+    await this.stop();
     this.onChunk = options.onChunk || this.onChunk;
+    this.onSpeechStart = options.onSpeechStart || this.onSpeechStart;
+    this.onSpeechEnd = options.onSpeechEnd || this.onSpeechEnd;
+    this.onLevel = options.onLevel || this.onLevel;
     this.bufferSize = options.bufferSize || this.bufferSize;
+    this.collectChunks = Boolean(options.collectChunks ?? this.collectChunks);
+    this.startThreshold = Number(options.startThreshold ?? this.startThreshold);
+    this.stopThreshold = Number(options.stopThreshold ?? this.stopThreshold);
+    this.minSpeechFrames = Math.max(1, Number(options.minSpeechFrames ?? this.minSpeechFrames));
+    this.silenceDurationMs = Math.max(120, Number(options.silenceDurationMs ?? this.silenceDurationMs));
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -46,15 +66,26 @@ export class MicrophoneCapture {
     this.source = this.context.createMediaStreamSource(this.stream);
     this.processor = this.context.createScriptProcessor(this.bufferSize, 1, 1);
     this.chunks = [];
+    this.smoothedLevel = 0;
+    this.lastVoiceAt = 0;
+    this.aboveThresholdFrames = 0;
+    this.isSpeaking = false;
     this.processor.onaudioprocess = (event) => {
       const input = event.inputBuffer.getChannelData(0);
       const pcm = floatTo16BitPCM(input);
-      this.chunks.push(pcm);
+      const level = this.detectLevel(input);
+      const speaking = this.updateSpeechState(level);
+      if (this.collectChunks) {
+        this.chunks.push(pcm);
+      }
+      this.onLevel?.(level);
       this.onChunk?.({
         bytes: pcm,
         audioBase64: toBase64(pcm),
         byteLength: pcm.length,
         mimeType: this.mimeType,
+        level,
+        isSpeaking: speaking,
       });
     };
     this.source.connect(this.processor);
@@ -79,6 +110,10 @@ export class MicrophoneCapture {
       await this.context.close();
       this.context = null;
     }
+    this.isSpeaking = false;
+    this.aboveThresholdFrames = 0;
+    this.lastVoiceAt = 0;
+    this.smoothedLevel = 0;
   }
 
   async finish() {
@@ -96,5 +131,47 @@ export class MicrophoneCapture {
       mimeType: this.mimeType,
       byteLength: joined.length,
     };
+  }
+
+  detectLevel(input = []) {
+    if (!input.length) return 0;
+    let sumSquares = 0;
+    for (let index = 0; index < input.length; index += 1) {
+      const sample = input[index];
+      sumSquares += sample * sample;
+    }
+    const rms = Math.sqrt(sumSquares / input.length);
+    this.smoothedLevel = this.smoothedLevel
+      ? (this.smoothedLevel * 0.82) + (rms * 0.18)
+      : rms;
+    return this.smoothedLevel;
+  }
+
+  updateSpeechState(level = 0) {
+    const now = performance.now();
+    if (!this.isSpeaking) {
+      if (level >= this.startThreshold) {
+        this.aboveThresholdFrames += 1;
+        if (this.aboveThresholdFrames >= this.minSpeechFrames) {
+          this.isSpeaking = true;
+          this.lastVoiceAt = now;
+          this.aboveThresholdFrames = 0;
+          this.onSpeechStart?.({ level });
+        }
+      } else {
+        this.aboveThresholdFrames = 0;
+      }
+      return this.isSpeaking;
+    }
+
+    if (level >= this.stopThreshold) {
+      this.lastVoiceAt = now;
+    }
+    if (now - this.lastVoiceAt >= this.silenceDurationMs) {
+      this.isSpeaking = false;
+      this.aboveThresholdFrames = 0;
+      this.onSpeechEnd?.({ level });
+    }
+    return this.isSpeaking;
   }
 }

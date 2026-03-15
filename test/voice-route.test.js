@@ -101,6 +101,14 @@ test("voice session routes proxy the realtime lifecycle", async () => {
           stopped: true,
         };
       },
+      async interruptTurn(sessionId) {
+        calls.push(["interruptTurn", sessionId]);
+        return {
+          sessionId,
+          conversationId: sessionId,
+          interrupted: true,
+        };
+      },
     },
   });
 
@@ -136,15 +144,22 @@ test("voice session routes proxy the realtime lifecycle", async () => {
   assert.equal(stopResponse.status, 200);
   assert.equal((await stopResponse.json()).stopped, true);
 
+  const interruptResponse = await voiceRoute.request("/session/voice-session-1/interrupt", {
+    method: "POST",
+  });
+  assert.equal(interruptResponse.status, 200);
+  assert.equal((await interruptResponse.json()).interrupted, true);
+
   const eventsResponse = await voiceRoute.request("/session/voice-session-1/events");
   assert.equal(eventsResponse.status, 200);
   const sseText = await eventsResponse.text();
   assert.match(sseText, /"assistantText":"Caption reply"/);
-  assert.deepEqual(calls.slice(0, 5).map(([name]) => name), [
+  assert.deepEqual(calls.slice(0, 6).map(([name]) => name), [
     "createSession",
     "startTurn",
     "appendAudio",
     "stopTurn",
+    "interruptTurn",
     "subscribe",
   ]);
 });

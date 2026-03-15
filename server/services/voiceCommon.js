@@ -4,6 +4,7 @@ import { buildTutorSystemPrompt, buildFallbackTutorReply } from "./tutorPrompt.j
 
 export const OUTPUT_SAMPLE_RATE = 24000;
 export const INPUT_SAMPLE_RATE = 16000;
+export const DEFAULT_VOICE_ID = "matthew";
 const conversationSessions = new Map();
 
 export function getVoiceConversationSession(conversationId = null) {
@@ -16,6 +17,21 @@ export function getVoiceConversationSession(conversationId = null) {
 
 export function recentVoiceHistory(session) {
   return (session?.history || []).slice(-6);
+}
+
+export function normalizeVoiceHistoryForRealtime(history = []) {
+  const normalized = recentVoiceHistory({ history })
+    .map((entry) => ({
+      role: String(entry?.role || "").trim().toLowerCase(),
+      content: String(entry?.content || "").trim(),
+    }))
+    .filter((entry) => entry.content && (entry.role === "user" || entry.role === "assistant"));
+
+  while (normalized.length && normalized[0].role !== "user") {
+    normalized.shift();
+  }
+
+  return normalized;
 }
 
 export function decodeBase64Audio(audioBase64 = "") {
@@ -110,20 +126,24 @@ export function buildVoiceFallback({ text, context, userMessage }) {
 }
 
 function outputConfiguration(playbackMode, voiceId) {
+  const normalizedVoiceId = String(voiceId || "").trim();
+  const resolvedVoiceId = normalizedVoiceId || DEFAULT_VOICE_ID;
   const configuration = {
     textOutputConfiguration: {
       mediaType: "text/plain",
     },
-  };
-  if (playbackMode !== "caption_only") {
-    configuration.audioOutputConfiguration = {
+    // Nova Sonic requires audio output to be configured for bidirectional chat,
+    // even when the client plans to ignore speculative audio and captions-only UI.
+    audioOutputConfiguration: {
       mediaType: "audio/lpcm",
       sampleRateHertz: OUTPUT_SAMPLE_RATE,
       sampleSizeBits: 16,
       channelCount: 1,
-      ...(voiceId ? { voiceId } : {}),
-    };
-  }
+      encoding: "base64",
+      audioType: "SPEECH",
+      voiceId: resolvedVoiceId,
+    },
+  };
   return configuration;
 }
 
@@ -174,7 +194,7 @@ export function buildConversationPreambleEvents({
     }));
   }
 
-  recentVoiceHistory({ history }).forEach((entry, index) => {
+  normalizeVoiceHistoryForRealtime(history).forEach((entry, index) => {
     const text = String(entry?.content || "").trim();
     if (!text) return;
     events.push(...buildTextContentEvents({
@@ -205,6 +225,9 @@ export function buildTextContentEvents({
           type: "TEXT",
           interactive,
           role,
+          textInputConfiguration: {
+            mediaType: "text/plain",
+          },
         },
       },
     },
@@ -245,6 +268,8 @@ export function buildAudioContentStartEvent({
           sampleRateHertz: INPUT_SAMPLE_RATE,
           sampleSizeBits: 16,
           channelCount: 1,
+          audioType: "SPEECH",
+          encoding: "base64",
         },
       },
     },
@@ -270,29 +295,27 @@ export function buildAudioChunkEvent({
 export function buildPromptEndEvents({
   promptName,
   contentName,
+  includeContentEnd = false,
 }) {
-  return [
-    {
+  const events = [];
+  if (includeContentEnd && contentName) {
+    events.push({
       event: {
         contentEnd: {
           promptName,
           contentName,
         },
       },
-    },
-    {
-      event: {
-        promptEnd: {
-          promptName,
-        },
+    });
+  }
+  events.push({
+    event: {
+      promptEnd: {
+        promptName,
       },
     },
-    {
-      event: {
-        sessionEnd: {},
-      },
-    },
-  ];
+  });
+  return events;
 }
 
 export function buildSonicTurnEvents({
@@ -333,7 +356,11 @@ export function buildSonicTurnEvents({
     }));
   }
 
-  events.push(...buildPromptEndEvents({ promptName, contentName }));
+  events.push(...buildPromptEndEvents({
+    promptName,
+    contentName,
+    includeContentEnd: Boolean(audioBuffer?.length),
+  }));
   return events;
 }
 
@@ -358,6 +385,10 @@ function eventContentMeta(state, contentId) {
     type: "TEXT",
     generationStage: "FINAL",
   };
+}
+
+function isInterruptedMarker(text = "") {
+  return String(text || "").replace(/\s+/g, "").toLowerCase() === "{\"interrupted\":true}";
 }
 
 function audioBase64FromEvent(audioOutput = {}) {
@@ -424,6 +455,9 @@ export function extractVoiceStreamDelta(rawEvent, state = createVoiceEventState(
       }
 
       if (meta.generationStage === "FINAL") {
+        if (isInterruptedMarker(content)) {
+          return null;
+        }
         state.assistantFinalText += content;
         return {
           type: "assistant_text",

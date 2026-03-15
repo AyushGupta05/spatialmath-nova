@@ -19,6 +19,7 @@ import {
   getVoiceConversationSession,
   createVoiceEventState,
 } from "./voiceCommon.js";
+import { generateRecoveredVoiceReply } from "./voiceReplyFallback.js";
 
 function createAsyncQueue() {
   const values = [];
@@ -88,6 +89,10 @@ function fallbackCaptionForTurn(turn) {
   return "Voice mode is unavailable right now. Type your question and I'll keep helping in the chat.";
 }
 
+function emptyVoiceTurnReply() {
+  return "I didn't catch anything. Try that again.";
+}
+
 export function createVoiceSessionManager(deps = {}) {
   const sessions = new Map();
   const startStream = deps.startBidirectionalStream || startBidirectionalStream;
@@ -95,6 +100,7 @@ export function createVoiceSessionManager(deps = {}) {
   const getCapabilities = deps.getCapabilitySnapshot || getCapabilitySnapshot;
   const modelCandidates = deps.getModelCandidateOrder || getModelCandidateOrder;
   const rememberModel = deps.rememberWorkingModel || rememberWorkingModel;
+  const recoverVoiceReply = deps.generateRecoveredVoiceReply || generateRecoveredVoiceReply;
 
   function ensureSession(sessionId = null) {
     const conversation = getVoiceConversationSession(sessionId);
@@ -193,12 +199,13 @@ export function createVoiceSessionManager(deps = {}) {
       ?? turn.assistantFinalText
       ?? turn.assistantPreviewText
       ?? turn.fallbackText
-    ) || "I didn't catch that. Hold the mic and try again.";
+    ) || "I didn't catch that. Try again.";
+    const shouldPersistTurn = Boolean(inputTranscript);
 
-    if (inputTranscript) {
+    if (shouldPersistTurn) {
       session.conversation.history.push({ role: "user", content: inputTranscript });
+      session.conversation.history.push({ role: "assistant", content: assistantText });
     }
-    session.conversation.history.push({ role: "assistant", content: assistantText });
     session.currentTurn = null;
 
     publish(session, {
@@ -208,6 +215,15 @@ export function createVoiceSessionManager(deps = {}) {
       assistantText,
       fallbackUsed: Boolean(result.fallbackUsed),
       source: result.source || "nova-sonic",
+      actions: Array.isArray(result.actions) ? result.actions : [],
+      focusTargets: Array.isArray(result.focusTargets) ? result.focusTargets : [],
+      checkpoint: result.checkpoint || null,
+      stageStatus: result.stageStatus || null,
+      completionState: result.completionState || null,
+      sceneDirective: result.sceneDirective || null,
+      sceneCommand: result.sceneCommand || null,
+      assessment: result.assessment || null,
+      conceptVerdict: result.conceptVerdict || null,
       capabilities: result.fallbackUsed ? getCapabilities() : undefined,
     });
     setState(session, "idle");
@@ -244,6 +260,9 @@ export function createVoiceSessionManager(deps = {}) {
       } else {
         turn.assistantPreviewText = delta.content;
       }
+      if (turn.mode === "coach") {
+        return;
+      }
       setState(session, "responding");
       publish(session, {
         type: "assistant_text",
@@ -255,6 +274,10 @@ export function createVoiceSessionManager(deps = {}) {
     }
 
     if (delta.type === "assistant_audio") {
+      turn.assistantAudioReceived = true;
+      if (turn.mode === "coach") {
+        return;
+      }
       setState(session, "responding");
       publish(session, {
         type: "assistant_audio",
@@ -265,6 +288,64 @@ export function createVoiceSessionManager(deps = {}) {
     }
   }
 
+  async function recoverTurnReply(session, turn, assistantTextOverride = "") {
+    const inputTranscript = safeContent(turn.inputTranscript || turn.userText);
+    if (!inputTranscript) {
+      return null;
+    }
+
+    const recovered = await recoverVoiceReply({
+      inputTranscript,
+      assistantTextOverride,
+      mode: turn.mode,
+      context: turn.context,
+      session: session.conversation,
+      voiceId: turn.voiceId,
+    }).catch((error) => {
+      console.warn("Voice recovery fallback:", error?.message || error);
+      return null;
+    });
+
+    if (!recovered?.assistantText) {
+      return null;
+    }
+
+    setState(session, "responding");
+    if (recovered.assistantText !== assistantTextOverride || turn.mode === "coach") {
+      publish(session, {
+        type: "assistant_text",
+        content: recovered.assistantText,
+        delta: recovered.assistantText,
+        generationStage: "FINAL",
+      });
+    }
+
+    for (const audioBase64 of recovered.audioChunks || []) {
+      publish(session, {
+        type: "assistant_audio",
+        audioBase64,
+        sampleRateHertz: recovered.sampleRateHertz,
+        generationStage: "FINAL",
+      });
+    }
+
+    return {
+      assistantText: recovered.assistantText,
+      inputTranscript,
+      fallbackUsed: Boolean(recovered.fallbackUsed),
+      source: recovered.source,
+      actions: Array.isArray(recovered.actions) ? recovered.actions : [],
+      focusTargets: Array.isArray(recovered.focusTargets) ? recovered.focusTargets : [],
+      checkpoint: recovered.checkpoint || null,
+      stageStatus: recovered.stageStatus || null,
+      completionState: recovered.completionState || null,
+      sceneDirective: recovered.sceneDirective || null,
+      sceneCommand: recovered.sceneCommand || null,
+      assessment: recovered.assessment || null,
+      conceptVerdict: recovered.conceptVerdict || null,
+    };
+  }
+
   async function consumeTurn(session, turn, outputStream) {
     const eventState = createVoiceEventState();
     try {
@@ -272,8 +353,25 @@ export function createVoiceSessionManager(deps = {}) {
         const delta = extractVoiceStreamDelta(rawEvent, eventState);
         handleTurnDelta(session, turn, delta);
       }
-      finalizeTurn(session, turn);
+      if (turn.interrupted || turn.closed) {
+        return;
+      }
+      const assistantText = safeContent(turn.assistantFinalText || turn.assistantPreviewText);
+      if (safeContent(turn.inputTranscript || turn.userText)) {
+        const recovered = await recoverTurnReply(session, turn, assistantText);
+        finalizeTurn(session, turn, recovered || undefined);
+        return;
+      }
+      finalizeTurn(session, turn, assistantText ? undefined : {
+        assistantText: turn.fallbackText,
+        inputTranscript: null,
+        fallbackUsed: true,
+        source: "caption-only",
+      });
     } catch (error) {
+      if (turn.interrupted || turn.closed) {
+        return;
+      }
       failTurn(session, turn, error);
     }
   }
@@ -288,6 +386,15 @@ export function createVoiceSessionManager(deps = {}) {
   }) {
     const session = ensureSession(sessionId);
     if (session.currentTurn && !session.currentTurn.closed) {
+      if (!session.currentTurn.inputEnded) {
+        return {
+          sessionId: session.id,
+          conversationId: session.id,
+          modelId: session.currentTurn.modelId || null,
+          fallbackUsed: false,
+          alreadyActive: true,
+        };
+      }
       throw new Error("A voice turn is already in progress.");
     }
 
@@ -312,6 +419,7 @@ export function createVoiceSessionManager(deps = {}) {
       inputQueue: null,
       inputEnded: false,
       audioChunkCount: 0,
+      assistantAudioReceived: false,
       closed: false,
     };
     session.currentTurn = turn;
@@ -346,6 +454,7 @@ export function createVoiceSessionManager(deps = {}) {
       const { modelId, inputQueue, outputStream } = await openTurnStream(session, turn, systemPrompt);
       turn.inputQueue = inputQueue;
       turn.modelId = modelId;
+      turn.outputStream = outputStream;
       turn.outputTask = consumeTurn(session, turn, outputStream);
 
       if (userText) {
@@ -361,6 +470,7 @@ export function createVoiceSessionManager(deps = {}) {
         for (const event of buildPromptEndEvents({
           promptName: turn.promptName,
           contentName: turn.contentName,
+          includeContentEnd: false,
         })) {
           inputQueue.push(event);
         }
@@ -428,9 +538,27 @@ export function createVoiceSessionManager(deps = {}) {
       };
     }
 
+    if (!turn.userText && turn.audioChunkCount === 0) {
+      turn.inputEnded = true;
+      turn.inputQueue.close();
+      finalizeTurn(session, turn, {
+        fallbackUsed: true,
+        source: "empty-input",
+        assistantText: emptyVoiceTurnReply(),
+        inputTranscript: null,
+      });
+      return {
+        sessionId: session.id,
+        conversationId: session.id,
+        stopped: true,
+        emptyInput: true,
+      };
+    }
+
     for (const event of buildPromptEndEvents({
       promptName: turn.promptName,
       contentName: turn.contentName,
+      includeContentEnd: true,
     })) {
       turn.inputQueue.push(event);
     }
@@ -442,6 +570,43 @@ export function createVoiceSessionManager(deps = {}) {
       sessionId: session.id,
       conversationId: session.id,
       stopped: true,
+    };
+  }
+
+  async function interruptTurn(sessionId) {
+    const session = ensureSession(sessionId);
+    const turn = session.currentTurn;
+    if (!turn || turn.closed) {
+      return {
+        sessionId: session.id,
+        conversationId: session.id,
+        interrupted: false,
+      };
+    }
+
+    turn.interrupted = true;
+    turn.closed = true;
+    turn.inputEnded = true;
+    turn.inputQueue?.close();
+    session.currentTurn = null;
+
+    try {
+      await turn.outputStream?.return?.();
+    } catch {
+      // Streams can already be closing as the next utterance starts.
+    }
+
+    publish(session, {
+      type: "interrupted",
+      conversationId: session.id,
+      turnId: turn.id,
+    });
+    setState(session, "idle");
+
+    return {
+      sessionId: session.id,
+      conversationId: session.id,
+      interrupted: true,
     };
   }
 
@@ -458,6 +623,7 @@ export function createVoiceSessionManager(deps = {}) {
     startTurn,
     appendAudio,
     stopTurn,
+    interruptTurn,
   };
 }
 

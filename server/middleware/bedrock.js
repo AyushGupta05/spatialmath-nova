@@ -9,16 +9,26 @@ import {
 const REGION = process.env.AWS_REGION || "us-east-1";
 
 let client = null;
+let suppressedBearerToken = null;
+
+function getStaticAwsCredentials() {
+  if (!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY)) {
+    return null;
+  }
+  return {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    sessionToken: process.env.AWS_SESSION_TOKEN || undefined,
+  };
+}
 
 function getClient() {
   if (!client) {
-    const credentials = process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
-      ? {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-        sessionToken: process.env.AWS_SESSION_TOKEN || undefined,
-      }
-      : undefined;
+    const credentials = getStaticAwsCredentials();
+    if (credentials && process.env.AWS_BEARER_TOKEN_BEDROCK) {
+      suppressedBearerToken = process.env.AWS_BEARER_TOKEN_BEDROCK;
+      delete process.env.AWS_BEARER_TOKEN_BEDROCK;
+    }
     client = new BedrockRuntimeClient({
       region: REGION,
       credentials,
@@ -30,6 +40,10 @@ function getClient() {
 /** Reset client (useful if credentials rotate) */
 export function resetClient() {
   client = null;
+  if (!process.env.AWS_BEARER_TOKEN_BEDROCK && suppressedBearerToken) {
+    process.env.AWS_BEARER_TOKEN_BEDROCK = suppressedBearerToken;
+  }
+  suppressedBearerToken = null;
 }
 
 /**
@@ -124,32 +138,61 @@ function normalizeBidirectionalBody(events) {
   }());
 }
 
-function parseBidirectionalError(output) {
+function describeBedrockResponseDetails(error) {
+  const parts = [];
+  const statusCode = error?.$metadata?.httpStatusCode || error?.$response?.statusCode || null;
+  const requestId = error?.$metadata?.requestId || error?.$response?.headers?.["x-amzn-requestid"] || null;
+  const cfId = error?.$response?.headers?.["x-amz-cf-id"] || null;
+
+  if (statusCode) {
+    parts.push(`status=${statusCode}`);
+  }
+  if (requestId) {
+    parts.push(`requestId=${requestId}`);
+  }
+  if (cfId) {
+    parts.push(`cfId=${cfId}`);
+  }
+
+  return parts.length ? ` (${parts.join(", ")})` : "";
+}
+
+function formatBedrockCommandError(modelId, error) {
+  const rawMessage = error?.message || "Bedrock request failed";
+  return new Error(`Bidirectional stream failed for ${modelId}: ${rawMessage}${describeBedrockResponseDetails(error)}`);
+}
+
+function parseBidirectionalError(modelId, output) {
   if (output.internalServerException) {
-    throw new Error(output.internalServerException.message || "Bedrock internal server exception");
+    throw new Error(`${modelId}: ${output.internalServerException.message || "Bedrock internal server exception"} | ${JSON.stringify(output.internalServerException)}`);
   }
   if (output.modelStreamErrorException) {
-    throw new Error(output.modelStreamErrorException.message || "Bedrock stream error");
+    throw new Error(`${modelId}: ${output.modelStreamErrorException.message || "Bedrock stream error"} | ${JSON.stringify(output.modelStreamErrorException)}`);
   }
   if (output.validationException) {
-    throw new Error(output.validationException.message || "Bedrock validation error");
+    throw new Error(`${modelId}: ${output.validationException.message || "Bedrock validation error"} | ${JSON.stringify(output.validationException)}`);
   }
   if (output.throttlingException) {
-    throw new Error(output.throttlingException.message || "Bedrock throttling error");
+    throw new Error(`${modelId}: ${output.throttlingException.message || "Bedrock throttling error"} | ${JSON.stringify(output.throttlingException)}`);
   }
   if (output.modelTimeoutException) {
-    throw new Error(output.modelTimeoutException.message || "Bedrock model timeout");
+    throw new Error(`${modelId}: ${output.modelTimeoutException.message || "Bedrock model timeout"} | ${JSON.stringify(output.modelTimeoutException)}`);
   }
   if (output.serviceUnavailableException) {
-    throw new Error(output.serviceUnavailableException.message || "Bedrock service unavailable");
+    throw new Error(`${modelId}: ${output.serviceUnavailableException.message || "Bedrock service unavailable"} | ${JSON.stringify(output.serviceUnavailableException)}`);
   }
 }
 
 export async function startBidirectionalStream(modelId, events) {
-  const response = await getClient().send(new InvokeModelWithBidirectionalStreamCommand({
-    modelId,
-    body: normalizeBidirectionalBody(events),
-  }));
+  let response;
+  try {
+    response = await getClient().send(new InvokeModelWithBidirectionalStreamCommand({
+      modelId,
+      body: normalizeBidirectionalBody(events),
+    }));
+  } catch (error) {
+    throw formatBedrockCommandError(modelId, error);
+  }
 
   return (async function* decodedStream() {
     for await (const output of response.body || []) {
@@ -161,7 +204,7 @@ export async function startBidirectionalStream(modelId, events) {
         continue;
       }
 
-      parseBidirectionalError(output);
+      parseBidirectionalError(modelId, output);
     }
   }());
 }

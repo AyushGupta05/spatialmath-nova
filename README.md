@@ -49,7 +49,7 @@ AWS_SESSION_TOKEN=your_session_token
 
 # Optional overrides
 NOVA_TEXT_MODEL_ID=us.amazon.nova-2-lite-v1:0
-NOVA_SONIC_MODEL_ID=global.amazon.nova-2-sonic-v1:0
+NOVA_SONIC_MODEL_ID=amazon.nova-2-sonic-v1:0
 NOVA_EMBED_MODEL_ID=amazon.nova-2-multimodal-embeddings-v1:0
 ```
 

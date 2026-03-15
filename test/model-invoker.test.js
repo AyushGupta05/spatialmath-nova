@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   clearWorkingModelCache,
   getWorkingModelId,
+  resolveModelCandidates,
 } from "../server/services/modelRouter.js";
 import {
   converseStreamWithModelFailover,
@@ -12,6 +13,21 @@ import {
 
 test.beforeEach(() => {
   clearWorkingModelCache();
+});
+
+test("resolveModelCandidates normalizes legacy voice model aliases to the supported Sonic model id", async () => {
+  const original = process.env.NOVA_SONIC_MODEL_ID;
+  process.env.NOVA_SONIC_MODEL_ID = "global.amazon.nova-2-sonic-v1:0";
+
+  try {
+    assert.deepEqual(resolveModelCandidates("voice"), ["amazon.nova-2-sonic-v1:0", "amazon.nova-sonic-v1:0"]);
+  } finally {
+    if (original === undefined) {
+      delete process.env.NOVA_SONIC_MODEL_ID;
+    } else {
+      process.env.NOVA_SONIC_MODEL_ID = original;
+    }
+  }
 });
 
 test("runWithModelFailover falls through to a working candidate and caches it", async () => {

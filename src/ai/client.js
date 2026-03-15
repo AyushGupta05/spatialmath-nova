@@ -198,6 +198,13 @@ export async function stopVoiceSessionTurn(sessionId) {
   return readJsonOrError(response, "Failed to stop the voice session");
 }
 
+export async function interruptVoiceSessionTurn(sessionId) {
+  const response = await fetch(`${API_BASE}/voice/session/${encodeURIComponent(sessionId)}/interrupt`, {
+    method: "POST",
+  });
+  return readJsonOrError(response, "Failed to interrupt the voice session");
+}
+
 export async function fetchCapabilities() {
   const response = await fetch(`${API_BASE}/capabilities`);
   return readJsonOrError(response, "Failed to load capabilities");

@@ -134,6 +134,17 @@ export function createVoiceRoute({
     }
   });
 
+  voiceRoute.post("/session/:sessionId/interrupt", async (c) => {
+    try {
+      const sessionId = c.req.param("sessionId");
+      const response = await sessionManager.interruptTurn(sessionId);
+      return c.json(response);
+    } catch (error) {
+      console.error("Voice session interrupt error:", error);
+      return c.json({ error: error.message || "Internal server error" }, 500);
+    }
+  });
+
   return voiceRoute;
 }
 
