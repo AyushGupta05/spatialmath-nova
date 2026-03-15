@@ -27,6 +27,17 @@ function slugify(value = "") {
     .slice(0, 48);
 }
 
+function formatList(labels = []) {
+  const clean = uniqueStrings(labels);
+  if (clean.length <= 1) return clean[0] || "";
+  if (clean.length === 2) return `${clean[0]} and ${clean[1]}`;
+  return `${clean.slice(0, -1).join(", ")}, and ${clean[clean.length - 1]}`;
+}
+
+function includesWord(text = "", pattern) {
+  return pattern.test(String(text || ""));
+}
+
 function isSceneShape(shape = "") {
   return ["line", "pointMarker", "plane", "cube", "cuboid", "sphere", "cylinder", "cone", "pyramid"].includes(shape);
 }
@@ -176,6 +187,141 @@ function buildGeneratedOverlays(plan, bounds) {
     hasFormulaOverlay: overlays.some((overlay) => overlay.id === "analytic-formula"),
     hasAnswerOverlay: overlays.some((overlay) => overlay.id === "analytic-answer"),
   };
+}
+
+function samePoint(a = [], b = [], tolerance = 0.001) {
+  return Array.isArray(a)
+    && Array.isArray(b)
+    && a.length === 3
+    && b.length === 3
+    && a.every((value, index) => Math.abs(Number(value) - Number(b[index])) <= tolerance);
+}
+
+function stageSceneInfo(plan, visibleSuggestionIds = []) {
+  const suggestionsById = new Map((plan.objectSuggestions || []).map((suggestion) => [suggestion.id, suggestion]));
+  const suggestions = visibleSuggestionIds
+    .map((id) => suggestionsById.get(id))
+    .filter(Boolean);
+  const points = suggestions.filter((suggestion) => suggestion.object?.shape === "pointMarker");
+  const lines = suggestions.filter((suggestion) => suggestion.object?.shape === "line");
+  const planes = suggestions.filter((suggestion) => suggestion.object?.shape === "plane");
+  const pointLabels = points.map((suggestion) => suggestion.object?.label || suggestion.title || suggestion.id);
+  const lineLabels = lines.map((suggestion) => suggestion.object?.label || suggestion.title || suggestion.id);
+  const planeLabels = planes.map((suggestion) => suggestion.object?.label || suggestion.title || suggestion.id);
+  let sharedAnchor = "";
+
+  if (points.length && lines.length) {
+    for (const point of points) {
+      const pointPosition = point.object?.position || [];
+      const lineStartsAtPoint = lines.filter((line) => samePoint(line.object?.params?.start, pointPosition));
+      if (lineStartsAtPoint.length >= 2) {
+        sharedAnchor = point.object?.label || point.title || point.id;
+        break;
+      }
+    }
+  }
+
+  return {
+    pointLabels: uniqueStrings(pointLabels),
+    lineLabels: uniqueStrings(lineLabels),
+    planeLabels: uniqueStrings(planeLabels),
+    sharedAnchor,
+  };
+}
+
+function analyticCalculationFocus(plan = {}) {
+  const question = normalizePromptText(plan.problem?.question || "");
+  if (includesWord(question, /\bangle\b/i)) return "angle";
+  if (includesWord(question, /\bdistance\b/i)) return "distance";
+  if (includesWord(question, /\bprojection\b/i)) return "projection";
+  if (includesWord(question, /\bdot product\b/i)) return "dot product";
+  if (includesWord(question, /\bmidpoint\b/i)) return "midpoint";
+  return "result";
+}
+
+function analyticStageCopy(plan, stage = {}, index = 0, total = 0) {
+  const info = stageSceneInfo(plan, stage.visibleObjectIds || []);
+  const formula = String(plan.answerScaffold?.formula || plan.analyticContext?.formulaCard?.formula || "").trim();
+  const focus = analyticCalculationFocus(plan);
+  const pointList = formatList(info.pointLabels);
+  const lineList = formatList(info.lineLabels);
+  const planeList = formatList(info.planeLabels);
+  const anchorText = info.sharedAnchor ? ` from ${info.sharedAnchor}` : "";
+
+  if (stage.revealFullSolution) {
+    return {
+      prompt: `Finish the ${focus} calculation and compare the result with the scene.`,
+      goal: "Connect the completed calculation back to the picture.",
+    };
+  }
+
+  if (stage.revealFormula) {
+    return {
+      prompt: formula
+        ? `Use the visible scene to apply ${formula}.`
+        : `Use the visible scene to complete the ${focus} calculation.`,
+      goal: formula
+        ? `Map the formula directly onto the revealed objects.`
+        : `Use the revealed objects to complete the calculation.`,
+    };
+  }
+
+  if (info.pointLabels.length && !info.lineLabels.length && !info.planeLabels.length) {
+    return {
+      prompt: `Points ${pointList} are shown on the grid. Read the givens first and identify what you need for the ${focus} calculation.`,
+      goal: "Use the plotted givens to set up the calculation.",
+    };
+  }
+
+  if (info.lineLabels.length && info.pointLabels.length) {
+    return {
+      prompt: focus === "angle"
+        ? `Vectors ${lineList} are now shown${anchorText}. Focus on the angle they make before calculating.`
+        : `Lines or vectors ${lineList} are now shown with the points. Focus on the relationship they create before calculating.`,
+      goal: "Use the revealed lines and points to understand the relationship you will calculate.",
+    };
+  }
+
+  if (info.lineLabels.length && info.planeLabels.length) {
+    return {
+      prompt: `The key objects ${formatList([...info.lineLabels, ...info.planeLabels])} are shown. Focus on their spatial relationship before calculating.`,
+      goal: "Use the revealed objects to understand the spatial relationship you will calculate.",
+    };
+  }
+
+  if (info.lineLabels.length) {
+    return {
+      prompt: `The key lines ${lineList} are now shown. Focus on what they tell you before calculating.`,
+      goal: "Use the revealed lines to set up the calculation.",
+    };
+  }
+
+  if (info.planeLabels.length) {
+    return {
+      prompt: `The reference plane${info.planeLabels.length > 1 ? "s" : ""} ${planeList} ${info.planeLabels.length > 1 ? "are" : "is"} shown. Use ${info.planeLabels.length > 1 ? "them" : "it"} to frame the calculation.`,
+      goal: "Use the revealed plane view to set up the calculation.",
+    };
+  }
+
+  return {
+    prompt: index === 0
+      ? "The givens are shown in the scene. Read them first, then set up the calculation."
+      : index === total - 1
+        ? "Use the revealed scene to finish the calculation."
+        : "Use the newly revealed scene elements to continue the calculation.",
+    goal: "Keep the calculation tied to what is visible in the scene.",
+  };
+}
+
+function rewriteAnalyticStages(plan, sourceStages = []) {
+  return sourceStages.map((stage, index) => {
+    const rewritten = analyticStageCopy(plan, stage, index, sourceStages.length);
+    return {
+      ...stage,
+      prompt: rewritten.prompt,
+      goal: rewritten.goal,
+    };
+  });
 }
 
 function overlayIdsForStage(visibleSuggestionIds = [], overlayContext = {}, options = {}) {
@@ -369,7 +515,7 @@ export function promoteNovaPlanToAnalyticAuto(rawPlan, options = {}) {
   const overlayContext = buildGeneratedOverlays(plan, bounds);
 
   const hasProvidedMoments = Array.isArray(plan.sceneMoments) && plan.sceneMoments.length >= 2;
-  const sourceStages = hasProvidedMoments
+  const rawSourceStages = hasProvidedMoments
     ? plan.sceneMoments.map((moment) => ({
       id: moment.id,
       title: moment.title,
@@ -383,9 +529,11 @@ export function promoteNovaPlanToAnalyticAuto(rawPlan, options = {}) {
     }))
     : buildStageSpecsFromBuildSteps(plan, fallbackCameraId);
 
-  if (!sourceStages.length) {
+  if (!rawSourceStages.length) {
     return plan;
   }
+
+  const sourceStages = rewriteAnalyticStages(plan, rawSourceStages);
 
   const sceneMoments = hasProvidedMoments
     ? sourceStages.map((stage) => ({

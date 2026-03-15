@@ -168,3 +168,91 @@ test("normalizeScenePlan infers a 2D companion mode for surface area and full 2D
   assert.equal(splitPlan.representationMode, "split_2d");
   assert.equal(flatPlan.representationMode, "2d");
 });
+
+test("normalizeScenePlan repairs named line endpoints and removes false origin narration", () => {
+  const plan = normalizeScenePlan({
+    problem: {
+      question: "Find the angle between vectors AB and AC.",
+      questionType: "spatial",
+    },
+    sourceSummary: {
+      inputMode: "text",
+      rawQuestion: "Given points A(1,1,0), B(5,1,0), and C(1,4,0), find the angle between AB and AC.",
+      cleanedQuestion: "Find the angle between vectors AB and AC.",
+      givens: [
+        "A = (1,1,0)",
+        "B = (5,1,0)",
+        "C = (1,4,0)",
+      ],
+      labels: ["A", "B", "C"],
+      relationships: [
+        "AB and AC both start from A at the origin of the plane's coordinate system.",
+      ],
+      diagramSummary: "With A at the origin of the plane's coordinate system, B lies to the right and C lies above A.",
+      conflicts: [],
+    },
+    sceneFocus: {
+      concept: "Angle at A",
+      primaryInsight: "Treat A as the origin before comparing the two vectors.",
+      focusPrompt: "Use the shared start point to compare AB and AC.",
+      judgeSummary: "A sits at the origin of the plane in the staged scene.",
+    },
+    objectSuggestions: [
+      {
+        id: "point-a",
+        title: "Point A",
+        object: {
+          id: "point-a-object",
+          label: "A",
+          shape: "pointMarker",
+          position: [1, 1, 0],
+          params: { radius: 0.1 },
+        },
+      },
+      {
+        id: "point-b",
+        title: "Point B",
+        object: {
+          id: "point-b-object",
+          label: "B",
+          shape: "pointMarker",
+          position: [5, 1, 0],
+          params: { radius: 0.1 },
+        },
+      },
+      {
+        id: "point-c",
+        title: "Point C",
+        object: {
+          id: "point-c-object",
+          label: "C",
+          shape: "pointMarker",
+          position: [1, 4, 0],
+          params: { radius: 0.1 },
+        },
+      },
+      {
+        id: "vector-ab",
+        title: "Vector AB",
+        object: {
+          id: "vector-ab-object",
+          label: "AB",
+          shape: "line",
+          params: {
+            start: [0, 0, 0],
+            end: [4, 0, 0],
+            thickness: 0.08,
+          },
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(plan.objectSuggestions.find((item) => item.id === "vector-ab")?.object?.params?.start, [1, 1, 0]);
+  assert.deepEqual(plan.objectSuggestions.find((item) => item.id === "vector-ab")?.object?.params?.end, [5, 1, 0]);
+  assert.doesNotMatch(plan.sourceSummary.diagramSummary, /\bA at the origin\b/i);
+  assert.doesNotMatch(plan.sourceSummary.relationships[0], /\bA .* origin\b/i);
+  assert.match(plan.sourceSummary.diagramSummary, /shared anchor point/i);
+  assert.doesNotMatch(plan.sceneFocus.primaryInsight, /\bA .* origin\b/i);
+  assert.match(plan.sceneFocus.primaryInsight, /shared anchor point/i);
+});

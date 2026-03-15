@@ -149,6 +149,14 @@ test("promoteNovaPlanToAnalyticAuto upgrades staged vector lessons into analytic
   assert.ok(promoted.sceneMoments[1].visibleObjectIds.includes("vector-ab"));
   assert.ok(promoted.sceneMoments[2].revealFormula);
   assert.ok(promoted.sceneMoments[2].revealFullSolution);
+  assert.deepEqual(promoted.objectSuggestions.find((item) => item.id === "vector-ab")?.object?.params?.start, [1, 1, 0]);
+  assert.deepEqual(promoted.objectSuggestions.find((item) => item.id === "vector-ab")?.object?.params?.end, [5, 1, 0]);
+  assert.deepEqual(promoted.objectSuggestions.find((item) => item.id === "vector-ac")?.object?.params?.start, [1, 1, 0]);
+  assert.deepEqual(promoted.objectSuggestions.find((item) => item.id === "vector-ac")?.object?.params?.end, [1, 4, 0]);
+  assert.match(promoted.sceneMoments[0].prompt, /shown on the grid/i);
+  assert.doesNotMatch(promoted.sceneMoments[0].prompt, /\bplace|plot|construct|build|draw|add\b/i);
+  assert.match(promoted.sceneMoments[1].prompt, /now shown/i);
+  assert.doesNotMatch(promoted.sceneMoments[1].prompt, /\bconstruct|build|draw|add\b/i);
   assert.ok(promoted.sceneOverlays.some((overlay) => overlay.id === "analytic-axes"));
   assert.ok(promoted.sceneOverlays.some((overlay) => overlay.id === "analytic-formula"));
   assert.equal(promoted.buildSteps[0].id, "plot-points");

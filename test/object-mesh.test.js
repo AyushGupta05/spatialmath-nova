@@ -42,6 +42,28 @@ test("analytic reference planes keep the translucent teaching style", () => {
   assert.equal(opacity, 0.28);
 });
 
+test("teaching lines use a translucent always-visible style", () => {
+  const opacity = sceneObjectBaseOpacity({
+    id: "vector-ab",
+    label: "AB",
+    shape: "line",
+    color: "#7cf7e4",
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    params: {
+      start: [1, 1, 0],
+      end: [5, 1, 0],
+      thickness: 0.08,
+    },
+    metadata: {
+      role: "vector",
+      roles: ["line", "vector"],
+    },
+  });
+
+  assert.equal(opacity, 0.78);
+});
+
 test("intersection points are detected for highlight accents", () => {
   const accent = shouldAccentIntersectionPoint({
     id: "intersection-point",

@@ -18,6 +18,7 @@ Rules:
 - Put direct text-image disagreements into conflicts.
 - Keep cleanedQuestion concise and student-facing.
 - Focus on geometric objects, measurements, labels, and relationships that would help build a 3D lesson.
+- Do not describe a point as "the origin" unless its coordinates are literally (0,0,0). If vectors share a starting point that is not (0,0,0), call it a shared anchor or common start point instead.
 - Return JSON only.`;
 
 export const PLAN_SYSTEM_PROMPT = `You are designing an interactive spatial reasoning tutor experience.
@@ -201,13 +202,18 @@ Rules:
 - Keep the tutor concise, scene-aware, and judge-friendly.
 - Make generated scenes editable and compact around the origin.
 - For vector, coordinate, line, plane, point, projection, distance, or angle questions that benefit from a staged visual walkthrough, set "experienceMode" to "analytic_auto".
+- Do not describe any labelled point as "the origin" unless that point is explicitly at (0,0,0). If multiple objects start from the same non-origin point, describe it as a shared anchor point instead.
 - For "analytic_auto" plans, build a step-by-step reveal:
   1. The first scene moment shows only the givens.
   2. Later moments add helper vectors, points, lines, or overlays.
   3. One later moment should reveal the formula.
   4. The final moment should reveal the full solution idea.
+- For "analytic_auto" plans, the scene is auto-staged by the tutor. Do NOT ask the learner to place, add, build, draw, or construct objects.
+- Instead, describe what is already visible in the scene and what the learner should calculate or notice next.
+- Keep analytic_auto plans compact: usually 3-5 scene moments, no more than 6 object suggestions, and short strings.
 - For "analytic_auto" plans, make "sceneMoments" and "lessonStages" align in order and ids when possible.
 - In "sceneMoments", "visibleObjectIds" must reference object suggestion ids, while "focusTargets" and lesson stage highlights must reference actual object ids.
 - For staged vector lessons, prefer coordinate grids, point labels, vector labels, and a formula card that explains how the visible objects map to the algebra.
+- When a line or vector is named by points such as AB or AC, its endpoints must match those point coordinates exactly rather than defaulting to the world origin.
 - Do not pre-bake only three hardcoded lesson types. Generalize from the question itself and invent the staged scene directly from the problem.
 - Return JSON only.`;

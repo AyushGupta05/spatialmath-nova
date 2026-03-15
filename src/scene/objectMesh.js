@@ -116,21 +116,49 @@ function buildMaterial(color, opacity = 1) {
   }), opacity);
 }
 
+function buildLineMaterial(color, opacity = 0.82) {
+  const tone = new THREE.Color(color);
+  return applyMaterialOpacity(new THREE.MeshBasicMaterial({
+    color: tone,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  }), opacity, true);
+}
+
 function lineRadius(thickness = 0.08) {
   return Math.max(0.012, Number(thickness || 0.08) * 0.22);
+}
+
+function applyLineMaterialStyle(mesh, opacity = 0.78, color = null) {
+  if (!mesh) return;
+  const tone = new THREE.Color(color || mesh.material?.color?.getHex?.() || "#dfefff");
+  if (!(mesh.material instanceof THREE.MeshBasicMaterial)) {
+    mesh.material?.dispose?.();
+    mesh.material = buildLineMaterial(tone, opacity);
+  } else {
+    mesh.material.color.copy(tone);
+    applyMaterialOpacity(mesh.material, opacity, true);
+  }
+  mesh.material.depthTest = false;
+  mesh.material.depthWrite = false;
+  mesh.renderOrder = 9;
+  mesh.frustumCulled = false;
 }
 
 function buildLineMesh(world, params, color) {
   const start = new THREE.Vector3(...params.start);
   const end = new THREE.Vector3(...params.end);
   if (typeof world?.buildLineMesh === "function") {
-    return world.buildLineMesh(start, end, params.thickness || 0.08, color);
+    const mesh = world.buildLineMesh(start, end, params.thickness || 0.08, color);
+    applyLineMaterialStyle(mesh, 0.78, color);
+    return mesh;
   }
   const mesh = new THREE.Mesh(
     new THREE.CylinderGeometry(lineRadius(params.thickness), lineRadius(params.thickness), 0.02, 18),
-    buildMaterial(color)
+    buildLineMaterial(color)
   );
   applyLineGeometry(world, mesh, params);
+  applyLineMaterialStyle(mesh, 0.78, color);
   return mesh;
 }
 
@@ -238,6 +266,12 @@ export function applySceneObjectToMesh(world, mesh, objectSpec) {
   }
 
   applyMaterialOpacity(mesh.material, mesh.userData.baseOpacity);
+  if (spec.shape === "line") {
+    applyLineMaterialStyle(mesh, mesh.userData.baseOpacity, spec.color);
+  } else {
+    mesh.material.depthTest = true;
+    mesh.renderOrder = 0;
+  }
   applyMeshDecorations(mesh, spec);
 
   mesh.geometry.computeBoundingBox?.();

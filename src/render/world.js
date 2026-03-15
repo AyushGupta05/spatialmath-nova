@@ -148,6 +148,20 @@ export function createWorld(container) {
     return material;
   }
 
+  function buildLineMaterial(color, opacity = 0.82) {
+    const tone = new THREE.Color(color);
+    const material = new THREE.MeshBasicMaterial({
+      color: tone,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    });
+    material.transparent = true;
+    material.opacity = opacity;
+    material.depthTest = false;
+    material.depthWrite = false;
+    return material;
+  }
+
   function lineRadius(thickness = 0.08) {
     return Math.max(0.012, Number(thickness || 0.08) * 0.22);
   }
@@ -305,9 +319,11 @@ export function createWorld(container) {
   function buildLineMesh(start, end, thickness, color) {
     const mesh = new THREE.Mesh(
       new THREE.CylinderGeometry(lineRadius(thickness), lineRadius(thickness), 0.02, 18),
-      buildMaterial(color)
+      buildLineMaterial(color)
     );
     applyLineTransform(mesh, start, end, thickness);
+    mesh.renderOrder = 9;
+    mesh.frustumCulled = false;
     return mesh;
   }
 

@@ -123,14 +123,15 @@ export async function generateScenePlan({ questionText = "", imageAsset = null, 
     }
   }
 
-  const sourceEvidence = buildSourceEvidence(sourceSummary);
+  const effectiveSourceSummary = mergedPlan.sourceSummary || sourceSummary;
+  const sourceEvidence = buildSourceEvidence(effectiveSourceSummary);
   const demoPreset = buildDemoPreset({
     plan: mergedPlan,
-    sourceSummary,
+    sourceSummary: effectiveSourceSummary,
     exemplar: retrieval.exemplar,
   });
   const agentTrace = buildAgentTrace({
-    sourceSummary,
+    sourceSummary: effectiveSourceSummary,
     retrieval,
     usedNovaPlan,
     usedAnalyticPlan,

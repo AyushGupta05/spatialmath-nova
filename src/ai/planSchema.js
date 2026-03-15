@@ -27,6 +27,7 @@ const VALID_TUTOR_ACTION_KINDS = [
   "reset-view",
   "start-suggested-question",
 ];
+const PLAN_POINT_MATCH_TOLERANCE = 0.001;
 
 function normalizeString(value, fallback = "") {
   return typeof value === "string" ? value : fallback;
@@ -58,6 +59,271 @@ function normalizeLessonStage(value, fallback = "orient") {
 
 function normalizeTutorActionKind(value, fallback = "continue-stage") {
   return VALID_TUTOR_ACTION_KINDS.includes(value) ? value : fallback;
+}
+
+function escapeRegex(value = "") {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeIdentifier(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function pointsMatch(a = [], b = [], tolerance = PLAN_POINT_MATCH_TOLERANCE) {
+  return Array.isArray(a)
+    && Array.isArray(b)
+    && a.length === 3
+    && b.length === 3
+    && a.every((value, index) => Math.abs(Number(value) - Number(b[index])) <= tolerance);
+}
+
+function isActualOrigin(position = []) {
+  return pointsMatch(position, [0, 0, 0]);
+}
+
+function roundPlanNumber(value, digits = 4) {
+  const scale = 10 ** digits;
+  return Math.round((Number(value) || 0) * scale) / scale;
+}
+
+function roundPlanVec3(vec = [], digits = 4) {
+  return [
+    roundPlanNumber(vec[0], digits),
+    roundPlanNumber(vec[1], digits),
+    roundPlanNumber(vec[2], digits),
+  ];
+}
+
+function buildPlanPointReferences(objectSuggestions = []) {
+  return objectSuggestions
+    .filter((suggestion) => suggestion?.object?.shape === "pointMarker")
+    .flatMap((suggestion) => {
+      const position = Array.isArray(suggestion.object?.position) ? suggestion.object.position : null;
+      if (!position || position.length !== 3) return [];
+      const names = [
+        suggestion.object?.label,
+        suggestion.title,
+        suggestion.id,
+        suggestion.object?.id,
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean);
+      return names.map((name) => ({
+        name,
+        normalized: normalizeIdentifier(name),
+        position: roundPlanVec3(position),
+      }));
+    })
+    .sort((a, b) => b.name.length - a.name.length);
+}
+
+function inferLineEndpointsFromPointNames(suggestion = {}, pointRefs = []) {
+  if (suggestion?.object?.shape !== "line" || pointRefs.length < 2) return null;
+  const haystack = [
+    suggestion.id,
+    suggestion.title,
+    suggestion.object?.label,
+  ].filter(Boolean).join(" ");
+  const normalizedHaystack = normalizeIdentifier(haystack);
+
+  for (const from of pointRefs) {
+    for (const to of pointRefs) {
+      if (from.normalized === to.normalized) continue;
+      const joinedPattern = new RegExp(`\\b${escapeRegex(from.name)}\\s*(?:to|-|->)?\\s*${escapeRegex(to.name)}\\b`, "i");
+      const reversePattern = new RegExp(`\\b${escapeRegex(to.name)}\\s*(?:to|-|->)?\\s*${escapeRegex(from.name)}\\b`, "i");
+      const joinedKey = `${from.normalized}${to.normalized}`;
+      const reverseKey = `${to.normalized}${from.normalized}`;
+
+      if (joinedPattern.test(haystack) || normalizedHaystack.includes(joinedKey)) {
+        return {
+          start: from.position,
+          end: to.position,
+          endpointLabels: [from.name, to.name],
+        };
+      }
+      if (reversePattern.test(haystack) || normalizedHaystack.includes(reverseKey)) {
+        return {
+          start: to.position,
+          end: from.position,
+          endpointLabels: [to.name, from.name],
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function repairNamedLineSuggestions(objectSuggestions = []) {
+  const pointRefs = buildPlanPointReferences(objectSuggestions);
+  if (pointRefs.length < 2) return objectSuggestions;
+
+  return objectSuggestions.map((suggestion) => {
+    if (suggestion?.object?.shape !== "line") return suggestion;
+    const inferred = inferLineEndpointsFromPointNames(suggestion, pointRefs);
+    if (!inferred) return suggestion;
+
+    return {
+      ...suggestion,
+      object: {
+        ...suggestion.object,
+        position: [...inferred.start],
+        params: {
+          ...(suggestion.object?.params || {}),
+          start: [...inferred.start],
+          end: [...inferred.end],
+        },
+        metadata: {
+          ...(suggestion.object?.metadata || {}),
+          endpointLabels: inferred.endpointLabels,
+        },
+      },
+    };
+  });
+}
+
+function falseOriginReplacement(name) {
+  return `${name} as the shared anchor point`;
+}
+
+function sanitizeFalseOriginText(value = "", pointRefs = []) {
+  let next = normalizeString(value, "");
+  if (!next) return next;
+
+  for (const pointRef of pointRefs) {
+    if (!pointRef.normalized || isActualOrigin(pointRef.position)) continue;
+    const name = pointRef.name;
+    const sharedAnchor = falseOriginReplacement(name);
+    const atOriginPatterns = [
+      new RegExp(`\\bwith\\s+${escapeRegex(name)}\\s+at\\s+the\\s+origin(?:\\s+of\\s+[^,.;]+)?`, "gi"),
+      new RegExp(`\\b${escapeRegex(name)}\\s+lies\\s+at\\s+the\\s+origin(?:\\s+of\\s+[^,.;]+)?`, "gi"),
+      new RegExp(`\\b${escapeRegex(name)}\\s+is\\s+at\\s+the\\s+origin(?:\\s+of\\s+[^,.;]+)?`, "gi"),
+      new RegExp(`\\b${escapeRegex(name)}\\s+as\\s+the\\s+origin(?:\\s+of\\s+[^,.;]+)?`, "gi"),
+      new RegExp(`\\b${escapeRegex(name)}\\s+at\\s+the\\s+origin(?:\\s+of\\s+[^,.;]+)?`, "gi"),
+      new RegExp(`\\b${escapeRegex(name)}\\s+is\\s+the\\s+origin(?:\\s+of\\s+[^,.;]+)?`, "gi"),
+    ];
+
+    atOriginPatterns.forEach((pattern) => {
+      next = next.replace(pattern, (match) => {
+        if (/^with\b/i.test(match)) {
+          return `with ${sharedAnchor}`;
+        }
+        if (/\blies\b/i.test(match)) {
+          return `${name} lies at ${roundPlanVec3(pointRef.position).join(", ")}`;
+        }
+        if (/\bas\b/i.test(match)) {
+          return `${name} as the shared anchor point`;
+        }
+        if (/\bis\b/i.test(match)) {
+          return `${name} is the shared anchor point`;
+        }
+        return sharedAnchor;
+      });
+    });
+  }
+
+  return next;
+}
+
+function sanitizeNarrativeList(values = [], pointRefs = []) {
+  return uniqueStrings(values.map((value) => sanitizeFalseOriginText(value, pointRefs)));
+}
+
+function sanitizeSourceSummaryNarrative(sourceSummary = {}, pointRefs = []) {
+  return {
+    ...sourceSummary,
+    relationships: sanitizeNarrativeList(sourceSummary.relationships, pointRefs),
+    diagramSummary: sanitizeFalseOriginText(sourceSummary.diagramSummary, pointRefs),
+    conflicts: sanitizeNarrativeList(sourceSummary.conflicts, pointRefs),
+  };
+}
+
+function sanitizeSceneFocusNarrative(sceneFocus = {}, pointRefs = []) {
+  return {
+    ...sceneFocus,
+    concept: sanitizeFalseOriginText(sceneFocus.concept, pointRefs),
+    primaryInsight: sanitizeFalseOriginText(sceneFocus.primaryInsight, pointRefs),
+    focusPrompt: sanitizeFalseOriginText(sceneFocus.focusPrompt, pointRefs),
+    judgeSummary: sanitizeFalseOriginText(sceneFocus.judgeSummary, pointRefs),
+  };
+}
+
+function sanitizeBuildStepsNarrative(buildSteps = [], pointRefs = []) {
+  return buildSteps.map((step) => ({
+    ...step,
+    title: sanitizeFalseOriginText(step.title, pointRefs),
+    instruction: sanitizeFalseOriginText(step.instruction, pointRefs),
+    hint: sanitizeFalseOriginText(step.hint, pointRefs),
+    focusConcept: sanitizeFalseOriginText(step.focusConcept, pointRefs),
+    coachPrompt: sanitizeFalseOriginText(step.coachPrompt, pointRefs),
+  }));
+}
+
+function sanitizeLearningMomentsNarrative(learningMoments = {}, pointRefs = []) {
+  return Object.fromEntries(Object.entries(learningMoments).map(([stage, moment]) => [
+    stage,
+    {
+      ...moment,
+      title: sanitizeFalseOriginText(moment.title, pointRefs),
+      coachMessage: sanitizeFalseOriginText(moment.coachMessage, pointRefs),
+      goal: sanitizeFalseOriginText(moment.goal, pointRefs),
+      prompt: sanitizeFalseOriginText(moment.prompt, pointRefs),
+      insight: sanitizeFalseOriginText(moment.insight, pointRefs),
+      whyItMatters: sanitizeFalseOriginText(moment.whyItMatters, pointRefs),
+    },
+  ]));
+}
+
+function sanitizeLessonStagesNarrative(lessonStages = [], pointRefs = []) {
+  return lessonStages.map((stage) => ({
+    ...stage,
+    title: sanitizeFalseOriginText(stage.title, pointRefs),
+    goal: sanitizeFalseOriginText(stage.goal, pointRefs),
+    tutorIntro: sanitizeFalseOriginText(stage.tutorIntro, pointRefs),
+    successCheck: sanitizeFalseOriginText(stage.successCheck, pointRefs),
+    checkpointPrompt: sanitizeFalseOriginText(stage.checkpointPrompt, pointRefs),
+    freeQuestionAnchor: sanitizeFalseOriginText(stage.freeQuestionAnchor, pointRefs),
+    mistakeProbe: sanitizeFalseOriginText(stage.mistakeProbe, pointRefs),
+  }));
+}
+
+function sanitizeChallengePromptsNarrative(prompts = [], pointRefs = []) {
+  return prompts.map((prompt) => ({
+    ...prompt,
+    prompt: sanitizeFalseOriginText(prompt.prompt, pointRefs),
+  }));
+}
+
+function sanitizeAnswerScaffoldNarrative(answerScaffold = {}, pointRefs = []) {
+  return {
+    ...answerScaffold,
+    explanation: sanitizeFalseOriginText(answerScaffold.explanation, pointRefs),
+    checks: sanitizeNarrativeList(answerScaffold.checks, pointRefs),
+  };
+}
+
+function sanitizeAnalyticContextNarrative(analyticContext = null, pointRefs = []) {
+  if (!analyticContext) return analyticContext;
+  return {
+    ...analyticContext,
+    subtype: sanitizeFalseOriginText(analyticContext.subtype, pointRefs),
+    derivedValues: analyticContext.derivedValues && typeof analyticContext.derivedValues === "object"
+      ? structuredClone(analyticContext.derivedValues)
+      : {},
+    formulaCard: {
+      ...(analyticContext.formulaCard || {}),
+      title: sanitizeFalseOriginText(analyticContext.formulaCard?.title, pointRefs),
+      formula: analyticContext.formulaCard?.formula || "",
+      explanation: sanitizeFalseOriginText(analyticContext.formulaCard?.explanation, pointRefs),
+    },
+    solutionSteps: normalizeArray(analyticContext.solutionSteps).map((step) => ({
+      ...step,
+      title: sanitizeFalseOriginText(step.title, pointRefs),
+      formula: step.formula || "",
+      explanation: sanitizeFalseOriginText(step.explanation, pointRefs),
+    })),
+  };
 }
 
 function normalizeSourceSummary(summary = {}, fallbackQuestion = "") {
@@ -544,26 +810,47 @@ function buildPredictionPrompt({ sceneFocus = {}, answerScaffold = {}, liveChall
 }
 
 export function normalizeScenePlan(plan = {}) {
-  const objectSuggestions = normalizeArray(plan.objectSuggestions || plan.objects)
+  const normalizedObjectSuggestions = normalizeArray(plan.objectSuggestions || plan.objects)
     .map((suggestion, index) => normalizeObjectSuggestion(suggestion, index));
-  const buildSteps = normalizeArray(plan.buildSteps || plan.steps)
-    .map((step, index) => normalizeBuildStep(step, index, objectSuggestions));
+  const objectSuggestions = repairNamedLineSuggestions(normalizedObjectSuggestions);
+  const pointRefs = buildPlanPointReferences(objectSuggestions);
+  const buildSteps = sanitizeBuildStepsNarrative(
+    normalizeArray(plan.buildSteps || plan.steps)
+      .map((step, index) => normalizeBuildStep(step, index, objectSuggestions)),
+    pointRefs,
+  );
   const rawCameraBookmarks = normalizeArray(plan.cameraBookmarks);
   if (!rawCameraBookmarks.length && plan.camera) {
     rawCameraBookmarks.push(plan.camera);
   }
   const cameraBookmarks = rawCameraBookmarks
     .map((bookmark, index) => normalizeCameraBookmark(bookmark, index));
-  const challengePrompts = normalizeArray(plan.challengePrompts)
-    .map((prompt, index) => normalizeChallengePrompt(prompt, index));
+  const challengePrompts = sanitizeChallengePromptsNarrative(
+    normalizeArray(plan.challengePrompts)
+      .map((prompt, index) => normalizeChallengePrompt(prompt, index)),
+    pointRefs,
+  );
   const liveChallenge = normalizeLiveChallenge(plan.liveChallenge);
   const question = normalizeString(plan.problem?.question || plan.question, "");
   const experienceMode = normalizeExperienceMode(plan.experienceMode, plan.analyticContext ? "analytic_auto" : "builder");
-  const answerScaffold = normalizeAnswerScaffold(plan.answerScaffold || plan.answer || {});
-  const sourceSummary = normalizeSourceSummary(plan.sourceSummary, question);
-  const sceneFocus = normalizeSceneFocus(plan.sceneFocus, sourceSummary.cleanedQuestion || question);
+  const answerScaffold = sanitizeAnswerScaffoldNarrative(
+    normalizeAnswerScaffold(plan.answerScaffold || plan.answer || {}),
+    pointRefs,
+  );
+  const sourceSummary = sanitizeSourceSummaryNarrative(
+    normalizeSourceSummary(plan.sourceSummary, question),
+    pointRefs,
+  );
+  const sceneFocus = sanitizeSceneFocusNarrative(
+    normalizeSceneFocus(plan.sceneFocus, sourceSummary.cleanedQuestion || question),
+    pointRefs,
+  );
   const sourceEvidence = normalizeSourceEvidence(plan.sourceEvidence, sourceSummary);
-  const analyticContext = normalizeAnalyticContext(plan.analyticContext);
+  const analyticContext = sanitizeAnalyticContextNarrative(
+    normalizeAnalyticContext(plan.analyticContext),
+    pointRefs,
+  );
+  const overview = sanitizeFalseOriginText(normalizeString(plan.overview, ""), pointRefs);
   const representationMode = normalizeRepresentationMode(
     plan.representationMode,
     inferPlanRepresentationMode(plan, sourceSummary, experienceMode)
@@ -581,10 +868,10 @@ export function normalizeScenePlan(plan = {}) {
     buildSteps,
     liveChallenge,
   });
-  const learningMoments = Object.fromEntries(LESSON_STAGES.map((stage) => [
+  const learningMoments = sanitizeLearningMomentsNarrative(Object.fromEntries(LESSON_STAGES.map((stage) => [
     stage,
     normalizeLearningMoment(plan.learningMoments?.[stage] || {}, stage, fallbackMoments[stage]),
-  ]));
+  ])), pointRefs);
   const suggestionsById = new Map(objectSuggestions.map((suggestion) => [suggestion.id, suggestion]));
   const fallbackLessonStages = defaultLessonStages({
     buildSteps,
@@ -592,14 +879,14 @@ export function normalizeScenePlan(plan = {}) {
     learningMoments,
     sceneFocus,
   });
-  const lessonStages = normalizeArray(plan.lessonStages).length
+  const lessonStages = sanitizeLessonStagesNarrative(normalizeArray(plan.lessonStages).length
     ? normalizeArray(plan.lessonStages).map((stage, index) => normalizeLessonStageEntry(stage, index, {
       buildSteps,
       suggestionsById,
       learningMoments,
       sceneFocus,
     }))
-    : fallbackLessonStages;
+    : fallbackLessonStages, pointRefs);
 
   return {
     problem: {
@@ -611,7 +898,7 @@ export function normalizeScenePlan(plan = {}) {
     },
     experienceMode,
     representationMode,
-    overview: normalizeString(plan.overview, ""),
+    overview,
     sourceSummary,
     sceneFocus,
     learningMoments,

@@ -116,6 +116,7 @@ export function bootstrapApp() {
   let pendingTransformSince = null;
   let rotationSession = null;
   let activeMesh = null;
+  let hoveredMesh = null;
   let dragIntent = null;
   let dragSession = null;
   let secondaryClickIntent = null;
@@ -188,6 +189,16 @@ export function bootstrapApp() {
         mesh: activeMesh,
       },
     }));
+  }
+
+  function setHoveredMesh(mesh) {
+    const nextHovered = mesh?.userData?.shape === "line" ? mesh : null;
+    if (hoveredMesh === nextHovered) return;
+    hoveredMesh = nextHovered;
+    if (world.renderer?.domElement) {
+      world.renderer.domElement.style.cursor = hoveredMesh ? "pointer" : "";
+    }
+    updateTutorFocusVisuals();
   }
 
   function currentPlan() {
@@ -421,14 +432,43 @@ export function bootstrapApp() {
 
   function restoreMeshVisualState(mesh) {
     if (!mesh?.material) return;
+    const isLine = mesh.userData?.shape === "line";
     const baseOpacity = mesh.userData?.baseOpacity ?? (mesh.userData?.shape === "plane" ? 0.72 : 0.9);
     const faded = Boolean(mesh.userData?.containsNestedObject);
-    mesh.material.transparent = faded || baseOpacity < 0.995;
-    mesh.material.opacity = faded ? Math.min(baseOpacity, 0.38) : baseOpacity;
-    mesh.material.depthWrite = !mesh.material.transparent;
+    const hovered = mesh === hoveredMesh;
+    const selected = mesh === activeMesh;
+    let opacity = faded ? Math.min(baseOpacity, 0.38) : baseOpacity;
+    let transparent = faded || baseOpacity < 0.995;
+
+    if (isLine) {
+      transparent = true;
+      opacity = Math.max(
+        opacity,
+        selected ? 1 : hovered ? 0.96 : baseOpacity,
+      );
+      mesh.material.depthTest = false;
+      mesh.material.depthWrite = false;
+      mesh.renderOrder = selected ? 15 : hovered ? 14 : 9;
+    } else {
+      mesh.material.depthTest = true;
+      mesh.material.depthWrite = !transparent;
+      mesh.renderOrder = 0;
+    }
+
+    mesh.material.transparent = transparent;
+    mesh.material.opacity = opacity;
+    if (!isLine) {
+      mesh.material.depthWrite = !mesh.material.transparent;
+    }
     if (mesh.material.emissive) {
       const baseEmissive = mesh.userData?.baseEmissive ?? mesh.material.emissive.getHex();
-      mesh.material.emissive.setHex(mesh === activeMesh ? 0xffc857 : baseEmissive);
+      if (selected) {
+        mesh.material.emissive.setHex(0xffc857);
+      } else if (hovered && isLine) {
+        mesh.material.emissive.setRGB(0.62, 0.78, 1);
+      } else {
+        mesh.material.emissive.setHex(baseEmissive);
+      }
     }
   }
 
@@ -452,8 +492,12 @@ export function bootstrapApp() {
 
       if (mesh.material) {
         mesh.material.transparent = true;
-        mesh.material.opacity = Math.min(mesh.userData?.baseOpacity ?? 0.9, 0.16);
+        mesh.material.opacity = Math.min(mesh.userData?.baseOpacity ?? 0.9, mesh.userData?.shape === "line" ? 0.28 : 0.16);
         mesh.material.depthWrite = false;
+        if (mesh.userData?.shape === "line") {
+          mesh.material.depthTest = false;
+          mesh.renderOrder = mesh === hoveredMesh ? 14 : 9;
+        }
       }
     }
   }
@@ -3556,6 +3600,12 @@ export function bootstrapApp() {
   });
 
   stageCanvas?.addEventListener("pointermove", (event) => {
+    if (!dragSession && !placementPreview) {
+      const hoverHit = world.pickObject(event.clientX, event.clientY, placedMeshes);
+      setHoveredMesh(hoverHit?.object || null);
+    } else if (hoveredMesh) {
+      setHoveredMesh(null);
+    }
     if (secondaryClickIntent && event.pointerId === secondaryClickIntent.pointerId) {
       const moved = Math.hypot(event.clientX - secondaryClickIntent.startX, event.clientY - secondaryClickIntent.startY);
       if (moved >= 6) {
@@ -3594,6 +3644,9 @@ export function bootstrapApp() {
 
   stageCanvas?.addEventListener("pointerup", finishPointerDrag);
   stageCanvas?.addEventListener("pointercancel", finishPointerDrag);
+  stageCanvas?.addEventListener("pointerleave", () => {
+    setHoveredMesh(null);
+  });
 
   // Mouse wheel scaling with Alt+scroll
   stageCanvas?.addEventListener("wheel", (event) => {
