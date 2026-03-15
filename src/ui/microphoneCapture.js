@@ -24,6 +24,7 @@ export class MicrophoneCapture {
     this.context = null;
     this.source = null;
     this.processor = null;
+    this.sink = null;
     this.chunks = [];
     this.onChunk = options.onChunk || null;
     this.onSpeechStart = options.onSpeechStart || null;
@@ -60,11 +61,14 @@ export class MicrophoneCapture {
         sampleRate: 16000,
         echoCancellation: true,
         noiseSuppression: true,
+        autoGainControl: true,
       },
     });
     this.context = new AudioContext({ sampleRate: 16000 });
     this.source = this.context.createMediaStreamSource(this.stream);
     this.processor = this.context.createScriptProcessor(this.bufferSize, 1, 1);
+    this.sink = this.context.createGain();
+    this.sink.gain.value = 0;
     this.chunks = [];
     this.smoothedLevel = 0;
     this.lastVoiceAt = 0;
@@ -89,7 +93,8 @@ export class MicrophoneCapture {
       });
     };
     this.source.connect(this.processor);
-    this.processor.connect(this.context.destination);
+    this.processor.connect(this.sink);
+    this.sink.connect(this.context.destination);
   }
 
   async stop() {
@@ -101,6 +106,10 @@ export class MicrophoneCapture {
     if (this.source) {
       this.source.disconnect();
       this.source = null;
+    }
+    if (this.sink) {
+      this.sink.disconnect();
+      this.sink = null;
     }
     if (this.stream) {
       this.stream.getTracks().forEach((track) => track.stop());

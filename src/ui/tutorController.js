@@ -51,6 +51,7 @@ let voiceTurnOpen = false;
 let voiceUserSpeaking = false;
 let voiceSessionState = "idle";
 let voiceBufferedChunks = [];
+let voiceAssistantBargeInUnlockAt = 0;
 let lastAnnouncedStageKey = null;
 let lastCheckpointKey = null;
 let analyticOverlayManager = null;
@@ -347,6 +348,17 @@ function ensureVoiceAudioPlayer() {
   return voiceAudioPlayer;
 }
 
+function canInterruptAssistantWithSpeech(level = 0) {
+  const player = ensureVoiceAudioPlayer();
+  if (!player.isPlaying()) {
+    return true;
+  }
+  if (performance.now() < voiceAssistantBargeInUnlockAt) {
+    return false;
+  }
+  return Number(level) >= 0.06;
+}
+
 function resetVoiceDraft() {
   voiceStreamDraft = {
     userMessage: null,
@@ -354,6 +366,7 @@ function resetVoiceDraft() {
     inputTranscript: "",
     assistantPreviewText: "",
     assistantFinalText: "",
+    assistantAudioStarted: false,
   };
   return voiceStreamDraft;
 }
@@ -423,6 +436,7 @@ async function resetVoiceSessionState() {
   voiceUserSpeaking = false;
   voiceSessionState = "idle";
   clearVoiceBufferedChunks();
+  voiceAssistantBargeInUnlockAt = 0;
   if (activeMicCapture) {
     await activeMicCapture.stop();
     activeMicCapture = null;
@@ -1768,6 +1782,10 @@ function handleVoiceSessionEvent(event = {}) {
       });
       return;
     case "assistant_audio":
+      if (!currentVoiceDraft().assistantAudioStarted) {
+        currentVoiceDraft().assistantAudioStarted = true;
+        voiceAssistantBargeInUnlockAt = performance.now() + 1200;
+      }
       ensureVoiceAudioPlayer()
         .appendBase64Chunk(event.audioBase64, event.sampleRateHertz || 24000)
         .catch((error) => {
@@ -1777,6 +1795,7 @@ function handleVoiceSessionEvent(event = {}) {
     case "interrupted":
       voiceTurnOpen = false;
       voiceUserSpeaking = false;
+      voiceAssistantBargeInUnlockAt = 0;
       ensureVoiceAudioPlayer().stop();
       setVoiceStatusForState("idle");
       return;
@@ -1790,6 +1809,7 @@ function handleVoiceSessionEvent(event = {}) {
       voiceConversationId = event.conversationId || voiceConversationId;
       voiceTurnOpen = false;
       voiceUserSpeaking = false;
+      voiceAssistantBargeInUnlockAt = 0;
       applyVoiceTurnResult(event);
       voiceStreamDraft = null;
       setVoiceStatusForState("idle");
@@ -1902,8 +1922,11 @@ async function startVoiceConversationTurn() {
   await voiceTurnStartPromise;
 }
 
-async function handleVoiceSpeechStart() {
+async function handleVoiceSpeechStart({ level } = {}) {
   if (!voiceModeEnabled || voiceUserSpeaking) return;
+  if (voiceSessionState === "responding" && !canInterruptAssistantWithSpeech(level)) {
+    return;
+  }
   voiceUserSpeaking = true;
   ensureVoiceAudioPlayer().stop();
   if (voiceTurnOpen && voiceSessionState !== "listening") {
@@ -1943,8 +1966,8 @@ async function enableVoiceMode() {
     voiceModeEnabled = true;
     activeMicCapture = new MicrophoneCapture({
       onChunk: queueVoiceAudioChunk,
-      onSpeechStart: () => {
-        void handleVoiceSpeechStart();
+      onSpeechStart: (event) => {
+        void handleVoiceSpeechStart(event);
       },
       onSpeechEnd: () => {
         void handleVoiceSpeechEnd();
@@ -1953,8 +1976,8 @@ async function enableVoiceMode() {
     });
     await activeMicCapture.start({
       onChunk: queueVoiceAudioChunk,
-      onSpeechStart: () => {
-        void handleVoiceSpeechStart();
+      onSpeechStart: (event) => {
+        void handleVoiceSpeechStart(event);
       },
       onSpeechEnd: () => {
         void handleVoiceSpeechEnd();
@@ -1980,6 +2003,7 @@ async function disableVoiceMode() {
   voiceUserSpeaking = false;
   voiceSessionState = "idle";
   clearVoiceBufferedChunks();
+  voiceAssistantBargeInUnlockAt = 0;
   if (activeMicCapture) {
     await activeMicCapture.stop().catch(() => {});
     activeMicCapture = null;

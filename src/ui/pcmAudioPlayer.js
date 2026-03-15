@@ -71,6 +71,16 @@ export class PcmAudioPlayer {
     }
   }
 
+  isPlaying() {
+    if (!this.context || this.context.state === "closed") {
+      return false;
+    }
+    if (this.sources.size) {
+      return true;
+    }
+    return this.nextStartTime > (this.context.currentTime + 0.01);
+  }
+
   async close() {
     this.stop();
     if (this.context && this.context.state !== "closed") {
