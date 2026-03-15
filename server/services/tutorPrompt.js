@@ -78,7 +78,67 @@ function titlesForSuggestionIds(plan, ids = []) {
   return ids.map((id) => byId.get(id) || id);
 }
 
-export function buildTutorSystemPrompt({ plan, sceneSnapshot, sceneContext, learningState, contextStepId, assessment }) {
+function stuckStrategy(stuckCount = 0) {
+  if (stuckCount <= 1) return "ANALOGY";
+  if (stuckCount === 2) return "SIMPLER_QUESTION";
+  return "SCENE_FOCUS";
+}
+
+function buildVerdictInstructions(verdict, learningState = {}) {
+  if (!verdict) return "";
+
+  const stuckCount = learningState?.stuckCount || 0;
+
+  switch (verdict.verdict) {
+    case "CORRECT":
+      return `
+
+=== EVALUATION RESULT: CORRECT ===
+The learner demonstrated correct understanding.
+What they understood: ${verdict.what_was_right}
+
+Response rules for this turn:
+- Tone: warm but not over-the-top. Do NOT say "Great job!" or "Excellent!"
+- Reference what they specifically said that was right.
+- Bridge naturally to the next stage concept. Max 2 sentences before the bridge.
+- End with a question that opens the next concept.`;
+
+    case "PARTIAL":
+      return `
+
+=== EVALUATION RESULT: PARTIAL ===
+What was right: ${verdict.what_was_right}
+The gap: ${verdict.gap || "unspecified"}
+Misconception type: ${verdict.misconception_type || "none identified"}
+
+Response rules for this turn:
+- Explicitly name what they got right FIRST.
+- Then redirect to the gap using a scene reference ("look at the highlighted faces...").
+- Do NOT reveal the answer yet.
+- End with a targeted question that isolates the gap.
+- Max 3 sentences total. This constraint is not optional.`;
+
+    case "STUCK":
+      return `
+
+=== EVALUATION RESULT: STUCK ===
+Misconception type: ${verdict.misconception_type || "none identified"}
+Hint level: ${stuckCount + 1} (consecutive times stuck on this stage)
+Strategy: ${stuckStrategy(stuckCount)}
+
+Response rules for this turn:
+- Use the ${stuckStrategy(stuckCount)} strategy. Pick ONE approach only:
+  - ANALOGY: if they're confused about the concept itself, relate it to something concrete
+  - SIMPLER_QUESTION: break the current question into a smaller, answerable piece
+  - SCENE_FOCUS: point them to a specific object or relationship visible in the scene
+- Keep it short. One question at the end. No answer.${stuckCount >= 2 ? "\n- Mention that they can tap 'View Solution' if they'd like to see the full worked solution." : ""}`;
+
+    default:
+      return "";
+  }
+}
+
+export function buildTutorSystemPrompt({ plan, sceneSnapshot, sceneContext, learningState, contextStepId, assessment, conceptVerdict }) {
   const normalizedPlan = normalizeScenePlan(plan);
   const currentStep = normalizedPlan.buildSteps.find((step) => step.id === contextStepId)
     || normalizedPlan.buildSteps[learningState?.currentStep || 0]
@@ -175,7 +235,7 @@ Conversation rules:
 - When a selected object is available, anchor to its actual dimensions and metrics.
 - When the learner is stuck, give the smallest useful nudge, not a full explanation.
 - Never recite formulas unless the learner has already attempted reasoning and asks to see one.
-- Never say "Great question!" or similar filler. Jump straight into the guiding thought.`;
+- Never say "Great question!" or similar filler. Jump straight into the guiding thought.${buildVerdictInstructions(conceptVerdict, learningState)}`;
 }
 
 export function buildFallbackTutorReply({ plan, assessment, sceneContext, userMessage, contextStepId }) {

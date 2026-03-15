@@ -9,7 +9,7 @@ function escapeHtml(value = "") {
     .replaceAll("'", "&#39;");
 }
 
-const MATH_TOKEN_PATTERN = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\]|(?<!\\)\$[^$\n]+?(?<!\\)\$)/g;
+const MATH_TOKEN_PATTERN = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|(?<!\\)\$[^$\n]+?(?<!\\)\$)/g;
 const LATEX_INPUT_PATTERN = /(^|[^\\])(\${1,2}|\\\(|\\\[)|\\(?:frac|sqrt|theta|pi|cdot|times|vec|left|right|angle|approx|epsilon|lambda|sigma|phi|alpha|beta|gamma|Delta)|[_^]/;
 const STANDALONE_MATH_PATTERN = /[=^_]|[θπ·√≈≤≥∞]|(?:\b(?:sin|cos|tan|theta|pi|epsilon|lambda|sigma|phi|angle|distance|vector|plane|line)\b)/i;
 const PROSE_PATTERN = /\b(?:the|and|or|use|if|when|what|which|before|after|look|compare|between|helpful|because|then|find|show|tell|explain)\b/i;

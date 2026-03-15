@@ -11,6 +11,15 @@ test("renderRichTextHtml typesets inline LaTeX inside chat content", () => {
   assert.match(html, /katex/);
 });
 
+test("renderRichTextHtml typesets \\(...\\) inline math delimiters", () => {
+  const source = "The angle is \\(\\theta = 90^\\circ\\) degrees.";
+  const html = renderRichTextHtml(source);
+
+  assert.equal(hasMathMarkup(source), true);
+  assert.match(html, /katex/);
+  assert.doesNotMatch(html, /<code>/);
+});
+
 test("renderMathBlockHtml typesets plain-text formulas for lesson cards", () => {
   const html = renderMathBlockHtml("cos(theta) = (AB · AC) / (|AB||AC|)");
 

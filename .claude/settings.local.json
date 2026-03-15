@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /c/Users/ayush/dev/spatialmath-nova/server -type f -name *.js -o -name *.py)",
+      "Bash(npm run:*)"
+    ]
+  }
+}

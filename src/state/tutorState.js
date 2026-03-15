@@ -38,6 +38,8 @@ export class TutorState extends EventTarget {
         response: "",
         submitted: false,
       },
+      learnerHistory: [],
+      stuckCount: 0,
       transcriptCollapsed: true,
       followUpCollapsed: true,
       error: null,
@@ -59,6 +61,8 @@ export class TutorState extends EventTarget {
   get similarQuestions() { return this._state.similarQuestions; }
   get learningStage() { return this._state.learningStage; }
   get predictionState() { return this._state.predictionState; }
+  get learnerHistory() { return this._state.learnerHistory; }
+  get stuckCount() { return this._state.stuckCount; }
   get transcriptCollapsed() { return this._state.transcriptCollapsed; }
   get followUpCollapsed() { return this._state.followUpCollapsed; }
   get error() { return this._state.error; }
@@ -70,6 +74,7 @@ export class TutorState extends EventTarget {
       history: [...this._state.history],
       completionState: { ...this._state.completionState },
       similarQuestions: [...this._state.similarQuestions],
+      learnerHistory: [...this._state.learnerHistory],
     };
   }
 
@@ -97,6 +102,8 @@ export class TutorState extends EventTarget {
       response: "",
       submitted: false,
     };
+    this._state.learnerHistory = [];
+    this._state.stuckCount = 0;
     this._state.transcriptCollapsed = true;
     this._state.followUpCollapsed = true;
     this._state.error = null;
@@ -221,6 +228,26 @@ export class TutorState extends EventTarget {
     return true;
   }
 
+  addVerdict({ stage, stageGoal, verdict, what_was_right, gap, misconception_type } = {}) {
+    const entry = {
+      stage: stage || this._state.learningStage,
+      stageGoal: stageGoal || "",
+      verdict: verdict || "PARTIAL",
+      what_was_right: what_was_right || "",
+      gap: gap || null,
+      misconception_type: misconception_type || null,
+      timestamp: Date.now(),
+    };
+    this._state.learnerHistory.push(entry);
+    if (verdict === "STUCK") {
+      this._state.stuckCount += 1;
+    } else {
+      this._state.stuckCount = 0;
+    }
+    this._emit("verdict", { verdict: entry, stuckCount: this._state.stuckCount });
+    return entry;
+  }
+
   addMessage(role, content) {
     const entry = { role, content, timestamp: Date.now() };
     this._state.history.push(entry);
@@ -270,6 +297,8 @@ export class TutorState extends EventTarget {
         response: "",
         submitted: false,
       },
+      learnerHistory: [],
+      stuckCount: 0,
       transcriptCollapsed: true,
       followUpCollapsed: true,
       error: null,

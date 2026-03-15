@@ -141,6 +141,18 @@ function systemContextMessage(plan) {
   return `${diagram} ${givens}${conflicts}`.trim();
 }
 
+function sceneCueFocusTargets(sceneCue, plan) {
+  if (!sceneCue || typeof sceneCue !== "string") return [];
+  const allObjectIds = (plan.objectSuggestions || []).map((s) => s.object?.id).filter(Boolean);
+  const match = sceneCue.match(/highlight_(.+)/);
+  if (match) {
+    const target = match[1];
+    const found = allObjectIds.filter((id) => id.includes(target));
+    return found.length ? found : [];
+  }
+  return [];
+}
+
 export function buildTutorResponseMeta({
   plan: planInput,
   learningState = {},
@@ -148,6 +160,7 @@ export function buildTutorResponseMeta({
   assessment = null,
   completionState = null,
   userMessage = "",
+  conceptVerdict = null,
 }) {
   const plan = normalizeScenePlan(planInput);
   const revealSolution = completionState?.reason === "revealed-solution";
@@ -168,9 +181,28 @@ export function buildTutorResponseMeta({
         .map((id) => suggestionById(plan, id)?.object?.id)
         .filter(Boolean);
 
+  const cueFocusTargets = sceneCueFocusTargets(conceptVerdict?.scene_cue, plan);
+  const mergedFocusTargets = cueFocusTargets.length
+    ? [...new Set([...focusTargets, ...cueFocusTargets])]
+    : focusTargets;
+
+  const actions = completionState?.complete ? [] : stageActionsForReply(plan, stage, learningState, assessment);
+  if (
+    conceptVerdict?.verdict === "STUCK"
+    && (learningState?.stuckCount || 0) >= 2
+    && !actions.some((a) => a.kind === "reveal-full-solution")
+  ) {
+    actions.push({
+      id: `${stage?.id || "stuck"}-solution`,
+      label: "View Solution",
+      kind: "reveal-full-solution",
+      payload: { stageId: stage?.id || null },
+    });
+  }
+
   return {
-    actions: completionState?.complete ? [] : stageActionsForReply(plan, stage, learningState, assessment),
-    focusTargets,
+    actions,
+    focusTargets: mergedFocusTargets,
     checkpoint: completionState?.complete
       ? null
       : assessment?.activeStep?.complete || assessment?.guidance?.readyForPrediction
@@ -197,7 +229,7 @@ export function buildTutorResponseMeta({
       cameraBookmarkId: plan.experienceMode === "analytic_auto"
         ? sceneMoment?.cameraBookmarkId || stage?.cameraBookmarkId || null
         : null,
-      focusTargets,
+      focusTargets: mergedFocusTargets,
       visibleObjectIds: plan.experienceMode === "analytic_auto" ? (sceneMoment?.visibleObjectIds || []) : [],
       visibleOverlayIds: plan.experienceMode === "analytic_auto" ? (sceneMoment?.visibleOverlayIds || []) : [],
       revealFormula: Boolean(plan.experienceMode === "analytic_auto" && (sceneMoment?.revealFormula || revealSolution)),

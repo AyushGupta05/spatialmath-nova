@@ -266,6 +266,112 @@ test("POST /api/tutor reveals the worked solution deterministically when asked d
   assert.match(text, /\(1, -2, 3\)/);
 });
 
+test("POST /api/tutor runs concept evaluation for non-trivial stages", async () => {
+  const plan = buildPlan();
+  let conceptEvalCalled = false;
+  const tutorRoute = createTutorRoute({
+    streamModel: async function* streamTutor() {
+      yield "Good insight.";
+    },
+    conceptEvaluator: async () => {
+      conceptEvalCalled = true;
+      return {
+        verdict: "PARTIAL",
+        confidence: 0.75,
+        what_was_right: "Identified the faces",
+        gap: "Missed pairing",
+        misconception_type: null,
+        scene_cue: null,
+        tutor_tone: "encouraging",
+      };
+    },
+  });
+
+  const response = await tutorRoute.request("/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      plan,
+      sceneSnapshot: { objects: [], selectedObjectId: null },
+      learningState: { currentStep: 0, learningStage: "check", history: [] },
+      userMessage: "I think the surface area involves all the faces somehow",
+      contextStepId: "step-1",
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(conceptEvalCalled, true);
+  const payloads = parseSsePayloads(await response.text());
+  const meta = payloads.find((entry) => entry.type === "meta")?.content;
+  assert.equal(meta?.conceptVerdict?.verdict, "PARTIAL");
+  assert.equal(meta?.completionState?.complete, false);
+});
+
+test("POST /api/tutor skips concept evaluation for trivial orient stage", async () => {
+  const plan = buildPlan();
+  let conceptEvalCalled = false;
+  const tutorRoute = createTutorRoute({
+    streamModel: async function* streamTutor() {
+      yield "Welcome.";
+    },
+    conceptEvaluator: async () => {
+      conceptEvalCalled = true;
+      return { verdict: "CORRECT", confidence: 1.0, what_was_right: "", gap: null, scene_cue: null, tutor_tone: "encouraging" };
+    },
+  });
+
+  const response = await tutorRoute.request("/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      plan,
+      sceneSnapshot: { objects: [], selectedObjectId: null },
+      learningState: { currentStep: 0, learningStage: "orient", history: [] },
+      userMessage: "ok",
+      contextStepId: "step-1",
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(conceptEvalCalled, false);
+  const payloads = parseSsePayloads(await response.text());
+  const meta = payloads.find((entry) => entry.type === "meta")?.content;
+  assert.equal(meta?.conceptVerdict, null);
+});
+
+test("POST /api/tutor bypasses concept evaluation when numeric answer matches", async () => {
+  const plan = buildPlan();
+  let conceptEvalCalled = false;
+  const tutorRoute = createTutorRoute({
+    streamModel: async function* streamTutor() {
+      yield "Correct!";
+    },
+    conceptEvaluator: async () => {
+      conceptEvalCalled = true;
+      return { verdict: "PARTIAL", confidence: 0.5, what_was_right: "", gap: null, scene_cue: null, tutor_tone: "encouraging" };
+    },
+  });
+
+  const response = await tutorRoute.request("/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      plan,
+      sceneSnapshot: { objects: [], selectedObjectId: null },
+      learningState: { currentStep: 0, learningStage: "check", history: [] },
+      userMessage: "21",
+      contextStepId: "step-1",
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(conceptEvalCalled, false);
+  const payloads = parseSsePayloads(await response.text());
+  const meta = payloads.find((entry) => entry.type === "meta")?.content;
+  assert.equal(meta?.conceptVerdict?.verdict, "CORRECT");
+  assert.equal(meta?.completionState?.complete, true);
+});
+
 test("POST /api/tutor supports freeform scene chat without a lesson plan", async () => {
   const tutorRoute = createTutorRoute();
 

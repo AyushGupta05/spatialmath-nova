@@ -8,11 +8,14 @@ import { buildTutorSystemPrompt, buildFallbackTutorReply } from "../services/tut
 import { converseStreamWithModelFailover } from "../services/modelInvoker.js";
 import { buildTutorResponseMeta } from "../services/tutorMetadata.js";
 import { generateSimilarTutorQuestions } from "../services/tutorSimilar.js";
+import { evaluateConcept, isTrivialInteraction } from "../services/conceptEvaluator.js";
 
 export function createTutorRoute({
   streamModel = converseStreamWithModelFailover,
   freeformTurnGenerator = generateFreeformTutorTurn,
   completionEvaluator = evaluateTutorCompletion,
+  conceptEvaluator = evaluateConcept,
+  trivialityCheck = isTrivialInteraction,
   similarQuestionGenerator = generateSimilarTutorQuestions,
 } = {}) {
   const tutorRoute = new Hono();
@@ -59,9 +62,48 @@ export function createTutorRoute({
 
       const assessment = evaluateBuild(plan, sceneSnapshot, contextStepId);
       const revealSolution = isExplicitSolutionRequest(userMessage);
-      const completionState = revealSolution
+      const numericCompletion = revealSolution
         ? { complete: true, reason: "revealed-solution" }
         : completionEvaluator({ plan, userMessage });
+
+      let conceptVerdict = null;
+      if (numericCompletion.complete) {
+        conceptVerdict = {
+          verdict: "CORRECT",
+          confidence: 1.0,
+          what_was_right: "Correct answer",
+          gap: null,
+          misconception_type: null,
+          scene_cue: null,
+          tutor_tone: "encouraging",
+        };
+      } else if (!revealSolution && !trivialityCheck(learningState?.learningStage, userMessage)) {
+        const currentStep = plan.buildSteps?.find((s) => s.id === contextStepId)
+          || plan.buildSteps?.[learningState?.currentStep || 0];
+        const stageGoal = currentStep?.focusConcept
+          || plan.sceneFocus?.primaryInsight
+          || plan.learningMoments?.[learningState?.learningStage]?.goal
+          || "";
+        try {
+          conceptVerdict = await conceptEvaluator({
+            stageGoal,
+            learnerInput: userMessage,
+            lessonContext: { plan, assessment },
+            prediction: learningState?.predictionState?.response || "",
+            learnerHistory: learningState?.learnerHistory || [],
+          });
+        } catch (err) {
+          console.error("Concept evaluation failed:", err);
+          conceptVerdict = null;
+        }
+      }
+
+      const completionState = numericCompletion.complete
+        ? numericCompletion
+        : conceptVerdict?.verdict === "CORRECT"
+          ? { complete: true, reason: "correct-answer" }
+          : { complete: false, reason: null };
+
       const responseMeta = buildTutorResponseMeta({
         plan,
         learningState,
@@ -69,6 +111,7 @@ export function createTutorRoute({
         assessment,
         completionState,
         userMessage,
+        conceptVerdict,
       });
       const deterministicRevealText = revealSolution ? buildSolutionRevealText(plan) : "";
       const systemPrompt = buildTutorSystemPrompt({
@@ -78,6 +121,7 @@ export function createTutorRoute({
         learningState,
         contextStepId,
         assessment,
+        conceptVerdict,
       });
 
       const history = Array.isArray(learningState.history) ? learningState.history : [];
@@ -100,7 +144,7 @@ export function createTutorRoute({
 
       return streamSSE(c, async (stream) => {
         try {
-          await stream.writeSSE({ data: JSON.stringify({ type: "meta", content: responseMeta }) });
+          await stream.writeSSE({ data: JSON.stringify({ type: "meta", content: { ...responseMeta, conceptVerdict } }) });
           if (revealSolution) {
             await stream.writeSSE({ data: JSON.stringify({ type: "text", content: deterministicRevealText || "Here is the worked solution." }) });
             await stream.writeSSE({ data: JSON.stringify({ type: "assessment", content: assessment }) });

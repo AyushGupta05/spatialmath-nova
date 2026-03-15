@@ -1509,6 +1509,17 @@ async function sendTutorMessage(messageText, options = {}) {
     });
     syncStepFromTutorResponse(response, plan);
 
+    if (response.conceptVerdict) {
+      tutorState.addVerdict({
+        stage: tutorState.learningStage,
+        stageGoal: response.conceptVerdict.stageGoal || "",
+        verdict: response.conceptVerdict.verdict,
+        what_was_right: response.conceptVerdict.what_was_right,
+        gap: response.conceptVerdict.gap,
+        misconception_type: response.conceptVerdict.misconception_type,
+      });
+    }
+
     if (response.completionState?.complete) {
       completeLesson({
         reason: response.completionState.reason || "correct-answer",
