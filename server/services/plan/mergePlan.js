@@ -2,6 +2,7 @@ import { normalizeScenePlan } from "../../../src/ai/planSchema.js";
 
 export function mergeGeneratedPlan({ baselinePlan, novaPlan, workingQuestion, mode }) {
   const preserveAnalytic = baselinePlan?.experienceMode === "analytic_auto";
+  const preferNovaScaffold = !preserveAnalytic && novaPlan?.experienceMode === "analytic_auto";
   return normalizeScenePlan({
     ...baselinePlan,
     ...novaPlan,
@@ -24,20 +25,28 @@ export function mergeGeneratedPlan({ baselinePlan, novaPlan, workingQuestion, mo
       ...novaPlan.learningMoments,
     },
     overview: novaPlan.overview || baselinePlan.overview,
-    objectSuggestions: (novaPlan.objectSuggestions?.length || 0) >= baselinePlan.objectSuggestions.length
+    objectSuggestions: preferNovaScaffold
+      ? (novaPlan.objectSuggestions?.length ? novaPlan.objectSuggestions : baselinePlan.objectSuggestions)
+      : (novaPlan.objectSuggestions?.length || 0) >= baselinePlan.objectSuggestions.length
       ? novaPlan.objectSuggestions
       : baselinePlan.objectSuggestions,
-    buildSteps: (novaPlan.buildSteps?.length || 0) >= baselinePlan.buildSteps.length
+    buildSteps: preferNovaScaffold
+      ? (novaPlan.buildSteps?.length ? novaPlan.buildSteps : baselinePlan.buildSteps)
+      : (novaPlan.buildSteps?.length || 0) >= baselinePlan.buildSteps.length
       ? novaPlan.buildSteps
       : baselinePlan.buildSteps,
-    cameraBookmarks: (novaPlan.cameraBookmarks?.length || 0)
+    cameraBookmarks: preferNovaScaffold
+      ? (novaPlan.cameraBookmarks?.length ? novaPlan.cameraBookmarks : baselinePlan.cameraBookmarks)
+      : (novaPlan.cameraBookmarks?.length || 0)
       ? novaPlan.cameraBookmarks
       : baselinePlan.cameraBookmarks,
     answerScaffold: {
       ...baselinePlan.answerScaffold,
       ...novaPlan.answerScaffold,
     },
-    challengePrompts: (novaPlan.challengePrompts?.length || 0)
+    challengePrompts: preferNovaScaffold
+      ? (novaPlan.challengePrompts?.length ? novaPlan.challengePrompts : baselinePlan.challengePrompts)
+      : (novaPlan.challengePrompts?.length || 0)
       ? novaPlan.challengePrompts
       : baselinePlan.challengePrompts,
     liveChallenge: novaPlan.liveChallenge || baselinePlan.liveChallenge || null,

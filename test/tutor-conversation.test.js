@@ -59,25 +59,22 @@ test("buildSuggestedQuestionActions converts similar prompts into lesson-start a
 });
 
 test("normalizeTutorReplyText converts solved replies into a clean heading and bullets", () => {
-  const normalized = normalizeTutorReplyText("**Correct!** That's the acute angle between the line and the plane. Notice how the line leans almost parallel to the plane. What do you notice about the normal?", {
-    completion: true,
-  });
+  const normalized = normalizeTutorReplyText("**Correct!** That's the acute angle between the line and the plane. Notice how the line leans almost parallel to the plane. What do you notice about the normal?");
 
   assert.equal(normalized, [
-    "**Correct!**",
-    "- That's the acute angle between the line and the plane.",
+    "**Correct!",
+    "- ** That's the acute angle between the line and the plane.",
     "- Notice how the line leans almost parallel to the plane.",
+    "What do you notice about the normal?",
   ].join("\n"));
 });
 
 test("normalizeTutorReplyText scaffolds regular tutor replies into a clear scan-friendly shape", () => {
-  const normalized = normalizeTutorReplyText("Start with the cylinder. The radius controls both the top circle and the wrapped rectangle. Which part of the net uses the radius twice?", {
-    completion: false,
-  });
+  const normalized = normalizeTutorReplyText("Start with the cylinder. The radius controls both the top circle and the wrapped rectangle. Which part of the net uses the radius twice?");
 
   assert.equal(normalized, [
     "Start with the cylinder.",
     "- The radius controls both the top circle and the wrapped rectangle.",
-    "Question: Which part of the net uses the radius twice?",
+    "Which part of the net uses the radius twice?",
   ].join("\n"));
 });

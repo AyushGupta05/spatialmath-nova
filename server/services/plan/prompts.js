@@ -31,6 +31,7 @@ Return ONLY valid JSON with this exact top-level structure:
     "summary": "string",
     "mode": "guided" | "manual"
   },
+  "experienceMode": "builder" | "analytic_auto",
   "overview": "short product-oriented overview",
   "sourceSummary": {
     "inputMode": "text" | "image" | "multimodal",
@@ -101,12 +102,78 @@ Return ONLY valid JSON with this exact top-level structure:
       "target": [x, y, z]
     }
   ],
+  "sceneMoments": [
+    {
+      "id": "string",
+      "title": "string",
+      "prompt": "string",
+      "goal": "string",
+      "focusTargets": ["object-id"],
+      "visibleObjectIds": ["object-suggestion-id"],
+      "visibleOverlayIds": ["overlay-id"],
+      "cameraBookmarkId": "string",
+      "revealFormula": false,
+      "revealFullSolution": false
+    }
+  ],
+  "sceneOverlays": [
+    {
+      "id": "string",
+      "type": "coordinate-frame" | "object-label" | "point-label" | "text" | "arrow",
+      "targetObjectId": "string",
+      "text": "string",
+      "style": "annotation" | "name" | "formula",
+      "position": [x, y, z],
+      "origin": [x, y, z],
+      "target": [x, y, z],
+      "offset": [x, y, z],
+      "bounds": {
+        "x": [min, max],
+        "y": [min, max],
+        "z": [min, max],
+        "tickStep": 1
+      }
+    }
+  ],
+  "lessonStages": [
+    {
+      "id": "string",
+      "title": "string",
+      "goal": "string",
+      "tutorIntro": "string",
+      "successCheck": "string",
+      "highlightTargets": ["object-id"],
+      "checkpointPrompt": "string"
+    }
+  ],
   "answerScaffold": {
     "finalAnswer": null,
     "unit": "string",
     "formula": "string",
     "explanation": "string",
     "checks": ["string"]
+  },
+  "analyticContext": {
+    "subtype": "string",
+    "entities": {
+      "points": [{ "id": "string", "label": "string", "coordinates": [x, y, z] }],
+      "lines": [{ "id": "string", "label": "string", "point": [x, y, z], "direction": [x, y, z] }],
+      "planes": [{ "id": "string", "label": "string", "normal": [x, y, z], "constant": 0 }]
+    },
+    "derivedValues": {},
+    "formulaCard": {
+      "title": "string",
+      "formula": "string",
+      "explanation": "string"
+    },
+    "solutionSteps": [
+      {
+        "id": "string",
+        "title": "string",
+        "formula": "string",
+        "explanation": "string"
+      }
+    ]
   },
   "challengePrompts": [
     {
@@ -133,4 +200,14 @@ Rules:
 - Use the learning loop Orient -> Build / Inspect -> Predict -> Check -> Reflect -> Challenge.
 - Keep the tutor concise, scene-aware, and judge-friendly.
 - Make generated scenes editable and compact around the origin.
+- For vector, coordinate, line, plane, point, projection, distance, or angle questions that benefit from a staged visual walkthrough, set "experienceMode" to "analytic_auto".
+- For "analytic_auto" plans, build a step-by-step reveal:
+  1. The first scene moment shows only the givens.
+  2. Later moments add helper vectors, points, lines, or overlays.
+  3. One later moment should reveal the formula.
+  4. The final moment should reveal the full solution idea.
+- For "analytic_auto" plans, make "sceneMoments" and "lessonStages" align in order and ids when possible.
+- In "sceneMoments", "visibleObjectIds" must reference object suggestion ids, while "focusTargets" and lesson stage highlights must reference actual object ids.
+- For staged vector lessons, prefer coordinate grids, point labels, vector labels, and a formula card that explains how the visible objects map to the algebra.
+- Do not pre-bake only three hardcoded lesson types. Generalize from the question itself and invent the staged scene directly from the problem.
 - Return JSON only.`;

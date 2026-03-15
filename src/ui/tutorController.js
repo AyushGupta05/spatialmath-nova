@@ -210,7 +210,7 @@ function formatChatInlineHtml(content = "") {
 function renderChatMessageHtml(content = "", options = {}) {
   const role = options.role || "tutor";
   const normalized = role === "tutor"
-    ? normalizeTutorReplyText(content, { completion: options.completion })
+    ? normalizeTutorReplyText(content)
     : String(content || "").replace(/\r\n?/g, "\n").trim();
 
   if (!normalized) {

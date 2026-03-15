@@ -1,0 +1,133 @@
+✔ detectAnalyticSubtype recognizes supported analytic prompts (2.3353ms)
+✔ buildAnalyticPlan creates an auto-rendered line-plane intersection lesson (4.0318ms)
+✔ buildAnalyticPlan creates an angle lesson with the correct formula and result (1.6778ms)
+✔ buildAnalyticPlan accepts natural language line-plane intersection wording (0.7969ms)
+✔ buildAnalyticPlan accepts plane-angle wording from the simplified worksheet prompt (0.7483ms)
+✔ buildAnalyticPlan keeps the actual anchor point for line-plane angle scenes (0.6874ms)
+✔ buildAnalyticPlan accepts worksheet-style direction vectors written with angle brackets (0.7561ms)
+✔ buildAnalyticPlan creates a skew-lines lesson with the shortest segment (1.4359ms)
+✔ buildAnalyticPlan accepts worksheet-style skew-lines prompts with unicode subscripts (0.6223ms)
+✔ evaluateBuild returns actionable guidance while the build is incomplete (1.8794ms)
+✔ evaluateBuild marks the lesson ready for prediction when required objects are present (0.5393ms)
+✔ GET /api/capabilities returns model and input capability flags (21.288ms)
+✔ buildElectricFieldPlan creates a single-charge playground with physics metadata (3.6462ms)
+✔ buildElectricFieldPlan creates a dipole playground with opposite charges (1.1274ms)
+✔ buildElectricFieldPlan creates a flux scene with a Gaussian surface (0.6338ms)
+✔ generateFreeformTutorTurn can load an electric-field scene without an active lesson (4.4747ms)
+✔ baseSizeToParams keeps line thickness decoupled from generic size (1.1804ms)
+✔ paramsToBaseSize for lines still tracks the visible span (0.3082ms)
+✔ runWithModelFailover falls through to a working candidate and caches it (1.5061ms)
+✔ converseStreamWithModelFailover retries a bad primary candidate before streaming (0.4406ms)
+✔ index.html keeps the chat-first tutor shell and removes judge demo panels (0.8182ms)
+✔ manual planes stay opaque until they need fading (0.6741ms)
+✔ analytic reference planes keep the translucent teaching style (0.1222ms)
+✔ intersection points are detected for highlight accents (0.6614ms)
+✔ normal guide lines are detected for accent styling (0.1523ms)
+✔ heuristicSourceSummary infers core metadata from text-only input (0.7488ms)
+✔ heuristicPlan builds a normalized volume lesson scaffold (2.0709ms)
+✔ mergeGeneratedPlan preserves merge precedence from baseline and nova plans (1.4848ms)
+✔ extractPlanPayload rejects invalid multipart sceneSnapshot JSON (19.0197ms)
+✔ extractPlanPayload rejects unsupported image mime types (3.5774ms)
+✔ extractPlanPayload rejects images larger than the maximum bytes limit (20.3701ms)
+✔ POST /api/plan multipart requests pass image and scene snapshot to the plan generator (16.5404ms)
+✔ normalizeScenePlan preserves lesson metadata and fills defaults (4.3793ms)
+✔ normalizeScenePlan infers a 2D companion mode for surface area and full 2D mode for nets (0.4229ms)
+✔ buildAnalyticPlannerInput prefers the raw typed question for deterministic analytic lessons (0.8086ms)
+✔ buildAnalyticPlannerInput keeps interpreted text when no raw question is available (0.0978ms)
+✔ buildAnalyticPlannerInput includes givens when reconstructed analytic text is needed (0.186ms)
+✔ computeWristAngle responds to wrist twist around the forearm axis (0.8128ms)
+✔ createPastedQuestionImageFile renames clipboard images consistently (0.8152ms)
+✔ extractPastedQuestionImageFile returns the first image clipboard item (0.1937ms)
+✔ extractPastedQuestionImageFile ignores clipboard data without an image (0.0709ms)
+✔ retrieveLessonExemplar uses stable fallback retrieval for a cylinder worksheet prompt (0.9007ms)
+✔ shouldSyncAnalyticScene does not rebuild the scene for same-stage tutor chat when required objects are present (0.7437ms)
+✔ shouldSyncAnalyticScene rebuilds the scene when the lesson advances to a new analytic stage (0.1457ms)
+✔ shouldSyncAnalyticScene rebuilds the scene when a required analytic object has gone missing (0.0855ms)
+✔ mergeRequiredSceneObjects preserves the learner's current scene while adding missing analytic objects (0.6524ms)
+✔ scene store on() unsubscribe detaches listener (1.1067ms)
+✔ contentBlocksForSource puts the image before text for multimodal parsing (0.5558ms)
+▶ supported builder prompts map to stable lesson families
+  ✔ cylinder volume (3.9762ms)
+  ✔ cube surface area companion (0.7209ms)
+  ✔ cone net (0.7447ms)
+  ✔ shape comparison (0.4215ms)
+✔ supported builder prompts map to stable lesson families (7.869ms)
+▶ supported analytic prompts map to the expected 3d subtypes
+  ✔ line-plane intersection (2.9362ms)
+  ✔ line-plane angle (1.7137ms)
+  ✔ skew lines distance (1.2826ms)
+✔ supported analytic prompts map to the expected 3d subtypes (6.5358ms)
+▶ supported electric-field prompts map to focused physics playgrounds
+  ✔ single charge (1.4203ms)
+  ✔ dipole (0.4117ms)
+  ✔ gaussian flux (0.3185ms)
+✔ supported electric-field prompts map to focused physics playgrounds (2.7148ms)
+✔ evaluateTutorCompletion marks numeric answers correct with tolerance (2.629ms)
+✔ evaluateTutorCompletion compares tuple-style answers component-wise (0.3896ms)
+✔ evaluateTutorCompletion keeps incorrect answers incomplete (0.223ms)
+✔ looksLikeShortFollowUp recognizes short post-solution follow-ups (1.0405ms)
+✔ isStandaloneMathProblem distinguishes a fresh math prompt from a follow-up (0.6621ms)
+✔ shouldStartLessonFromComposer bootstraps a lesson on the first lower-chat math prompt (0.2238ms)
+✔ buildSuggestedQuestionActions converts similar prompts into lesson-start actions (1.3188ms)
+✖ normalizeTutorReplyText converts solved replies into a clean heading and bullets (1.014ms)
+✔ normalizeTutorReplyText scaffolds regular tutor replies into a clear scan-friendly shape (0.1424ms)
+✔ computeLiveChallengeState unlocks and marks completion when target is reached (2.8951ms)
+✔ buildStageConfig returns stage-specific messaging for build and predict stages (0.7448ms)
+✔ buildTutorResponseMeta keeps supported surface-area lessons in split 2D mode (3.2127ms)
+✔ buildTutorResponseMeta can switch a supported lesson into full 2D mode for net requests (0.6253ms)
+Tutor freeform error: Error: boom
+    at freeformTurnGenerator (file:///C:/Users/ayush/dev/spatialmath-nova/test/tutor-route.test.js:263:13)
+    at Array.<anonymous> (file:///C:/Users/ayush/dev/spatialmath-nova/server/routes/tutor.js:37:32)
+    at async TestContext.<anonymous> (file:///C:/Users/ayush/dev/spatialmath-nova/test/tutor-route.test.js:267:20)
+    at async Test.run (node:internal/test_runner/test:1125:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+✔ POST /api/tutor streams lesson metadata before tutor text (16.9985ms)
+✔ POST /api/tutor includes deterministic completion metadata for correct answers (1.7454ms)
+✔ POST /api/tutor includes scene directives for analytic lessons (1.8795ms)
+✔ POST /api/tutor supports freeform scene chat without a lesson plan (5.3871ms)
+✔ POST /api/tutor freeform requests fall back safely when the freeform generator throws (1.7823ms)
+✔ POST /api/tutor/similar returns similar question suggestions (0.8174ms)
+✔ rankChallengeMatches keeps only genuinely close built-in matches (1.1003ms)
+✔ generateSimilarTutorQuestions avoids unrelated spatial challenge matches for analytic prompts (0.3878ms)
+✔ generateSimilarTutorQuestions uses close challenge-bank matches before template fallback (0.1918ms)
+✔ POST /api/voice/respond supports the richer voice contract (11.5734ms)
+✔ voice session routes proxy the realtime lifecycle (4.0333ms)
+✔ voice session manager streams transcript, audio, and done events with model failover (2.111ms)
+✔ voice session manager falls back to captions when credentials are unavailable (0.2737ms)
+ℹ tests 87
+ℹ suites 0
+ℹ pass 86
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 428.0537
+
+✖ failing tests:
+
+test at test\tutor-conversation.test.js:61:1
+✖ normalizeTutorReplyText converts solved replies into a clean heading and bullets (1.014ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + '**Correct!\n' +
+  +   "- ** That's the acute angle between the line and the plane.\n" +
+  - '**Correct!**\n' +
+  -   "- That's the acute angle between the line and the plane.\n" +
+      '- Notice how the line leans almost parallel to the plane.\n' +
+      'What do you notice about the normal?'
+  
+      at TestContext.<anonymous> (file:///C:/Users/ayush/dev/spatialmath-nova/test/tutor-conversation.test.js:64:10)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: "**Correct!\n- ** That's the acute angle between the line and the plane.\n- Notice how the line leans almost parallel to the plane.\nWhat do you notice about the normal?",
+    expected: "**Correct!**\n- That's the acute angle between the line and the plane.\n- Notice how the line leans almost parallel to the plane.\nWhat do you notice about the normal?",
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

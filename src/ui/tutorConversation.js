@@ -60,49 +60,33 @@ export function buildSuggestedQuestionActions(suggestions = []) {
     }));
 }
 
-function scaffoldTutorReply(text = "") {
-  const normalized = String(text || "").replace(/\r\n?/g, "\n").trim();
-  if (!normalized || /\n\s*[-*]\s+/.test(normalized)) return normalized;
+// Function removed because we now rely on the LLM to format the reply with bullets and paragraphs naturally.
 
-  const sentences = sentenceChunks(normalized);
-  if (sentences.length <= 1) return normalized;
-
-  const lastSentence = sentences[sentences.length - 1];
-  const hasQuestion = /\?\s*$/.test(lastSentence);
-  const intro = sentences[0];
-  const middle = sentences.slice(1, hasQuestion ? -1 : undefined).filter(Boolean);
-
-  return [
-    intro,
-    ...middle.slice(0, 2).map((sentence) => `- ${sentence}`),
-    ...(hasQuestion ? [`Question: ${lastSentence}`] : []),
-  ].join("\n");
-}
-
-export function normalizeTutorReplyText(text = "", options = {}) {
+export function normalizeTutorReplyText(text = "") {
   const normalized = String(text || "").replace(/\r\n?/g, "\n").trim();
   if (!normalized) return "";
-  if (!options.completion) return scaffoldTutorReply(normalized);
-  if (/\n\s*[-*]\s+/.test(normalized)) return normalized;
 
-  const headingMatch = normalized.match(/^(\*\*[^*]+\*\*|Correct!?\.?)(?:\s+|$)([\s\S]*)$/i);
-  if (!headingMatch) {
-    const sentences = sentenceChunks(normalized);
-    if (sentences.length <= 1) return normalized;
-    return sentences.map((sentence, index) => (index === 0 ? sentence : `- ${sentence}`)).join("\n");
+  // If the text already has bullets or explicit line breaks, keep it as is.
+  // The LLM is instructed to use concise bullet points and a final question.
+  if (/\n/.test(normalized)) return normalized;
+
+  // Let's ensure there are line breaks after sentences if there are no line breaks at all,
+  // to avoid large walls of text, but not delete any text.
+  const sentences = sentenceChunks(normalized);
+  if (sentences.length <= 2) return normalized;
+
+  const intro = sentences[0];
+  const question = sentences[sentences.length - 1];
+  const hasQuestion = /\?\s*$/.test(question);
+
+  if (hasQuestion && sentences.length > 2) {
+    const middle = sentences.slice(1, -1);
+    return [
+      intro,
+      ...middle.map(s => `- ${s}`),
+      question
+    ].join("\n");
   }
 
-  const heading = headingMatch[1].trim();
-  const body = headingMatch[2].trim();
-  const sentences = sentenceChunks(body);
-  const filtered = sentences.filter((sentence, index) => {
-    if (index !== sentences.length - 1) return true;
-    return !/\?\s*$/.test(sentence);
-  });
-  if (!filtered.length) return heading;
-
-  return [
-    heading,
-    ...filtered.map((sentence) => `- ${sentence}`),
-  ].join("\n");
+  return sentences.join("\n");
 }

@@ -117,3 +117,150 @@ test("mergeGeneratedPlan preserves merge precedence from baseline and nova plans
   assert.equal(merged.challengePrompts[0].id, "nova-challenge");
   assert.equal(merged.liveChallenge?.id, "nova-live");
 });
+
+test("mergeGeneratedPlan keeps a Nova analytic scaffold intact", () => {
+  const baseline = normalizeScenePlan({
+    problem: {
+      question: "Find the angle between vectors AB and AC.",
+      questionType: "spatial",
+      mode: "guided",
+    },
+    objectSuggestions: [
+      {
+        id: "baseline-a",
+        object: {
+          id: "baseline-a-object",
+          shape: "pointMarker",
+          label: "A",
+          position: [0, 0, 0],
+          params: { radius: 0.1 },
+        },
+      },
+      {
+        id: "baseline-b",
+        object: {
+          id: "baseline-b-object",
+          shape: "pointMarker",
+          label: "B",
+          position: [1, 0, 0],
+          params: { radius: 0.1 },
+        },
+      },
+      {
+        id: "baseline-c",
+        object: {
+          id: "baseline-c-object",
+          shape: "pointMarker",
+          label: "C",
+          position: [0, 1, 0],
+          params: { radius: 0.1 },
+        },
+      },
+      {
+        id: "baseline-ab",
+        object: {
+          id: "baseline-ab-object",
+          shape: "line",
+          label: "AB",
+          params: { start: [0, 0, 0], end: [1, 0, 0], thickness: 0.08 },
+        },
+      },
+    ],
+    buildSteps: [{
+      id: "baseline-step",
+      title: "Baseline step",
+      instruction: "Inspect the baseline scene.",
+      action: "observe",
+      suggestedObjectIds: ["baseline-a", "baseline-b", "baseline-c", "baseline-ab"],
+      requiredObjectIds: ["baseline-a", "baseline-b", "baseline-c", "baseline-ab"],
+    }],
+  });
+
+  const novaPlan = normalizeScenePlan({
+    problem: {
+      id: "nova-analytic",
+      question: "ignored",
+      questionType: "spatial",
+      mode: "guided",
+    },
+    experienceMode: "analytic_auto",
+    objectSuggestions: [
+      {
+        id: "nova-a",
+        object: {
+          id: "nova-a-object",
+          shape: "pointMarker",
+          label: "A",
+          position: [1, 1, 0],
+          params: { radius: 0.1 },
+        },
+      },
+      {
+        id: "nova-b",
+        object: {
+          id: "nova-b-object",
+          shape: "pointMarker",
+          label: "B",
+          position: [5, 1, 0],
+          params: { radius: 0.1 },
+        },
+      },
+    ],
+    buildSteps: [{
+      id: "observe",
+      title: "Observe",
+      instruction: "Look at the points first.",
+      action: "observe",
+      suggestedObjectIds: ["nova-a", "nova-b"],
+      requiredObjectIds: [],
+    }],
+    cameraBookmarks: [{
+      id: "overview",
+      label: "Overview",
+      position: [8, 6, 8],
+      target: [0, 0, 0],
+    }],
+    sceneMoments: [{
+      id: "observe",
+      title: "Observe",
+      prompt: "Look at the plotted points.",
+      goal: "See the givens first.",
+      focusTargets: ["nova-a-object", "nova-b-object"],
+      visibleObjectIds: ["nova-a", "nova-b"],
+      visibleOverlayIds: ["analytic-axes"],
+      cameraBookmarkId: "overview",
+      revealFormula: false,
+      revealFullSolution: false,
+    }],
+    answerScaffold: {
+      formula: "cos(theta) = (AB · AC) / (|AB||AC|)",
+    },
+    analyticContext: {
+      subtype: "angle_between_vectors",
+      formulaCard: {
+        title: "Angle Between Vectors",
+        formula: "cos(theta) = (AB · AC) / (|AB||AC|)",
+        explanation: "Compare the two vectors from the same anchor point.",
+      },
+      solutionSteps: [{
+        id: "step-1",
+        title: "Build the vectors",
+        formula: "AB = B - A, AC = C - A",
+        explanation: "Turn the points into vectors from the same anchor.",
+      }],
+    },
+  });
+
+  const merged = mergeGeneratedPlan({
+    baselinePlan: baseline,
+    novaPlan,
+    workingQuestion: "Find the angle between vectors AB and AC.",
+    mode: "guided",
+  });
+
+  assert.equal(merged.experienceMode, "analytic_auto");
+  assert.equal(merged.objectSuggestions[0].id, "nova-a");
+  assert.equal(merged.buildSteps[0].id, "observe");
+  assert.equal(merged.sceneMoments[0].id, "observe");
+  assert.equal(merged.answerScaffold.formula, "cos(theta) = (AB · AC) / (|AB||AC|)");
+});

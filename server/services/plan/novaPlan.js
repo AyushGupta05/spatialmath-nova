@@ -2,6 +2,7 @@ import { normalizeScenePlan } from "../../../src/ai/planSchema.js";
 import { PLAN_SYSTEM_PROMPT } from "./prompts.js";
 import { cleanupJson } from "./shared.js";
 import { converseWithModelFailover } from "../modelInvoker.js";
+import { promoteNovaPlanToAnalyticAuto } from "./novaAnalyticAuto.js";
 
 export async function planFromNova({ questionText, mode, sceneSnapshot, sourceSummary, exemplar = null }) {
   const text = await converseWithModelFailover("text", PLAN_SYSTEM_PROMPT, [
@@ -29,5 +30,9 @@ export async function planFromNova({ questionText, mode, sceneSnapshot, sourceSu
     temperature: 0.15,
   });
 
-  return normalizeScenePlan(JSON.parse(cleanupJson(text)));
+  const normalizedPlan = normalizeScenePlan(JSON.parse(cleanupJson(text)));
+  return promoteNovaPlanToAnalyticAuto(normalizedPlan, {
+    questionText,
+    sourceSummary,
+  });
 }
