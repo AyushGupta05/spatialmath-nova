@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { buildSolutionRevealText, isExplicitSolutionRequest } from "../../src/core/tutorSolution.js";
 import { evaluateBuild } from "../services/buildEvaluator.js";
 import { generateFreeformTutorTurn, buildFallbackFreeformTurn } from "../services/freeformTutor.js";
 import { evaluateTutorCompletion } from "../services/tutorCompletion.js";
@@ -57,7 +58,10 @@ export function createTutorRoute({
       }
 
       const assessment = evaluateBuild(plan, sceneSnapshot, contextStepId);
-      const completionState = completionEvaluator({ plan, userMessage });
+      const revealSolution = isExplicitSolutionRequest(userMessage);
+      const completionState = revealSolution
+        ? { complete: true, reason: "revealed-solution" }
+        : completionEvaluator({ plan, userMessage });
       const responseMeta = buildTutorResponseMeta({
         plan,
         learningState,
@@ -66,6 +70,7 @@ export function createTutorRoute({
         completionState,
         userMessage,
       });
+      const deterministicRevealText = revealSolution ? buildSolutionRevealText(plan) : "";
       const systemPrompt = buildTutorSystemPrompt({
         plan,
         sceneSnapshot,
@@ -96,6 +101,12 @@ export function createTutorRoute({
       return streamSSE(c, async (stream) => {
         try {
           await stream.writeSSE({ data: JSON.stringify({ type: "meta", content: responseMeta }) });
+          if (revealSolution) {
+            await stream.writeSSE({ data: JSON.stringify({ type: "text", content: deterministicRevealText || "Here is the worked solution." }) });
+            await stream.writeSSE({ data: JSON.stringify({ type: "assessment", content: assessment }) });
+            await stream.writeSSE({ data: JSON.stringify({ type: "done" }) });
+            return;
+          }
           for await (const chunk of streamModel("text", systemPrompt, messages, {
             maxTokens: 1024,
             temperature: 0.35,

@@ -55,6 +55,11 @@ function buildAnalyticPlan() {
       diagramSummary: "",
       conflicts: [],
     },
+    answerScaffold: {
+      formula: "n · (p + td) = c",
+      finalAnswer: "(1, -2, 3)",
+      unit: "",
+    },
     analyticContext: {
       subtype: "line_plane_intersection",
       formulaCard: {
@@ -228,6 +233,37 @@ test("POST /api/tutor includes scene directives for analytic lessons", async () 
   assert.deepEqual(meta.sceneDirective.visibleOverlayIds, ["analytic-axes"]);
   assert.ok(meta.actions.some((action) => action.kind === "show-formula"));
   assert.ok(meta.actions.some((action) => action.kind === "reveal-full-solution"));
+});
+
+test("POST /api/tutor reveals the worked solution deterministically when asked directly", async () => {
+  const plan = buildAnalyticPlan();
+  const tutorRoute = createTutorRoute({
+    streamModel: async function* streamTutor() {
+      yield "This should not run.";
+    },
+  });
+
+  const response = await tutorRoute.request("/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      plan,
+      sceneSnapshot: { objects: [], selectedObjectId: null },
+      learningState: { currentStep: 0, learningStage: "build", history: [] },
+      userMessage: "show me the final answer",
+      contextStepId: "observe",
+    }),
+  });
+
+  const payloads = parseSsePayloads(await response.text());
+  const meta = payloads.find((entry) => entry.type === "meta")?.content;
+  const text = payloads.filter((entry) => entry.type === "text").map((entry) => entry.content).join("");
+
+  assert.deepEqual(meta?.completionState, { complete: true, reason: "revealed-solution" });
+  assert.equal(meta?.sceneDirective?.revealFullSolution, true);
+  assert.equal(meta?.sceneDirective?.revealFormula, true);
+  assert.match(text, /Final answer/i);
+  assert.match(text, /\(1, -2, 3\)/);
 });
 
 test("POST /api/tutor supports freeform scene chat without a lesson plan", async () => {

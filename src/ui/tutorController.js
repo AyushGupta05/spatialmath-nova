@@ -11,6 +11,7 @@ import {
 } from "../ai/client.js";
 import { buildSceneSnapshotFromSuggestions, normalizeScenePlan } from "../ai/planSchema.js";
 import { computeGeometry } from "../core/geometry.js";
+import { buildSolutionRevealText, formatPlanFinalAnswer, isExplicitSolutionRequest } from "../core/tutorSolution.js";
 import { initLabelRenderer, renderLabels, addLabel, clearLabels } from "../render/labels.js";
 import { AnalyticOverlayManager } from "../render/analyticOverlayManager.js";
 import { CameraDirector } from "../render/cameraDirector.js";
@@ -19,6 +20,7 @@ import { supports2dCompanionShape } from "../ai/representationMode.js";
 import { tutorState } from "../state/tutorState.js";
 import { mergeRequiredSceneObjects, shouldSyncAnalyticScene } from "./sceneDirectiveSync.js";
 import { initUnfoldDrawer, setUnfoldRepresentationMode, syncUnfoldDrawer } from "./unfoldDrawer.js";
+import { hasMathMarkup, renderMathBlockHtml, renderRichTextHtml } from "./mathMarkup.js";
 import { MicrophoneCapture } from "./microphoneCapture.js";
 import { PcmAudioPlayer } from "./pcmAudioPlayer.js";
 import { extractPastedQuestionImageFile } from "./questionImage.js";
@@ -60,6 +62,7 @@ let questionSection;
 let questionInput;
 let questionSubmit;
 let questionStatus;
+let questionMathPreview;
 let questionImageInput;
 let questionImageMeta;
 let questionImagePreview;
@@ -71,6 +74,7 @@ let lessonPanelSummary;
 let chatMessages;
 let chatInput;
 let chatSend;
+let chatMathPreview;
 let voiceRecordBtn;
 let voiceStatus;
 let stageRail;
@@ -93,6 +97,8 @@ let formulaCardRevealBtn;
 let formulaCardCloseBtn;
 let solutionDrawer;
 let solutionDrawerTitle;
+let solutionDrawerAnswer;
+let solutionDrawerAnswerValue;
 let solutionDrawerSteps;
 let solutionDrawerClose;
 let newQuestionBtn;
@@ -203,58 +209,35 @@ function transcriptMessageTextNode(message) {
   return message?.querySelector(".chat-msg-text") || null;
 }
 
-function formatChatInlineHtml(content = "") {
-  return escapeHtml(content).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-}
-
 function renderChatMessageHtml(content = "", options = {}) {
   const role = options.role || "tutor";
   const normalized = role === "tutor"
     ? normalizeTutorReplyText(content)
     : String(content || "").replace(/\r\n?/g, "\n").trim();
-
-  if (!normalized) {
-    return `<p class="chat-msg-paragraph"></p>`;
-  }
-
-  const lines = normalized.split("\n");
-  const blocks = [];
-  let listItems = [];
-
-  const flushList = () => {
-    if (!listItems.length) return;
-    blocks.push(`<ul class="chat-msg-list">${listItems.join("")}</ul>`);
-    listItems = [];
-  };
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line) {
-      flushList();
-      continue;
-    }
-
-    const bulletMatch = line.match(/^[-*]\s+(.+)$/);
-    if (bulletMatch) {
-      listItems.push(`<li>${formatChatInlineHtml(bulletMatch[1])}</li>`);
-      continue;
-    }
-
-    flushList();
-    blocks.push(`<p class="chat-msg-paragraph">${formatChatInlineHtml(line)}</p>`);
-  }
-
-  flushList();
-  return blocks.join("");
+  return renderRichTextHtml(normalized);
 }
 
 function setTranscriptMessageText(message, content, options = {}) {
   const node = transcriptMessageTextNode(message);
   if (node) {
     const role = options.role || message?.dataset?.role || "tutor";
-    const completion = options.completion ?? message?.dataset?.completion === "true";
-    node.innerHTML = renderChatMessageHtml(content, { role, completion });
+    node.innerHTML = renderChatMessageHtml(content, { role });
   }
+}
+
+function resizeChatComposer() {
+  if (!chatInput) return;
+  chatInput.style.height = "0px";
+  const nextHeight = Math.min(Math.max(chatInput.scrollHeight, 34), 132);
+  chatInput.style.height = `${nextHeight}px`;
+}
+
+function updateMathPreview(previewEl, content = "") {
+  if (!previewEl) return;
+  const normalized = String(content || "").trim();
+  const shouldShow = Boolean(normalized) && hasMathMarkup(normalized);
+  previewEl.classList.toggle("hidden", !shouldShow);
+  previewEl.innerHTML = shouldShow ? renderRichTextHtml(normalized) : "";
 }
 
 function renderMessageActions(message, actions = []) {
@@ -784,6 +767,31 @@ function completeLesson({ reason = "correct-answer", revealSolution = false } = 
   void fetchSimilarQuestionsOnce();
 }
 
+function revealWorkedSolution(plan = activePlan(), { announceInTranscript = true } = {}) {
+  if (!plan) return;
+
+  analyticFormulaVisible = true;
+  analyticFullSolutionVisible = true;
+  analyticFormulaDismissed = false;
+
+  if (isAnalyticPlan(plan) && tutorState.currentStep < plan.lessonStages.length - 1) {
+    tutorState.goToStep(plan.lessonStages.length - 1);
+  }
+
+  if (isAnalyticPlan(plan)) {
+    applyAnalyticSceneState({ forceCamera: true });
+  }
+
+  renderAnalyticPanels(plan);
+  completeLesson({ reason: "revealed-solution", revealSolution: true });
+
+  if (announceInTranscript) {
+    const revealText = buildSolutionRevealText(plan);
+    addTranscriptMessage("tutor", revealText, { completion: true });
+    tutorState.addMessage("assistant", revealText);
+  }
+}
+
 function renderAnalyticPanels(plan = activePlan()) {
   const analytic = plan?.analyticContext || null;
   const showFormulaCard = Boolean(
@@ -800,24 +808,47 @@ function renderAnalyticPanels(plan = activePlan()) {
   if (!showFormulaCard || !analytic) return;
 
   if (formulaCardTitle) formulaCardTitle.textContent = analytic.formulaCard?.title || "Relevant Formula";
-  if (formulaCardEquation) formulaCardEquation.textContent = analytic.formulaCard?.formula || plan.answerScaffold?.formula || "";
-  if (formulaCardExplanation) formulaCardExplanation.textContent = analytic.formulaCard?.explanation || plan.answerScaffold?.explanation || "";
+  if (formulaCardEquation) {
+    formulaCardEquation.innerHTML = renderMathBlockHtml(analytic.formulaCard?.formula || plan.answerScaffold?.formula || "", {
+      displayMode: true,
+    });
+  }
+  if (formulaCardExplanation) {
+    formulaCardExplanation.innerHTML = renderRichTextHtml(analytic.formulaCard?.explanation || plan.answerScaffold?.explanation || "");
+  }
   if (formulaCardRevealBtn) {
     formulaCardRevealBtn.textContent = showSolutionDrawer ? "Hide Full Solution" : "Reveal Full Solution";
   }
 
   if (showSolutionDrawer && solutionDrawerTitle && solutionDrawerSteps) {
     solutionDrawerTitle.textContent = analytic.formulaCard?.title || "Worked Solution";
+    const finalAnswer = formatPlanFinalAnswer(plan);
+    if (solutionDrawerAnswer && solutionDrawerAnswerValue) {
+      solutionDrawerAnswer.classList.toggle("hidden", !finalAnswer.text);
+      solutionDrawerAnswerValue.innerHTML = finalAnswer.text
+        ? renderMathBlockHtml(finalAnswer.text, { displayMode: true })
+        : "";
+    }
     solutionDrawerSteps.innerHTML = "";
     (analytic.solutionSteps || []).forEach((step, index) => {
       const item = document.createElement("div");
       item.className = "solution-step";
-      item.innerHTML = `
-        <p class="solution-step-index">Step ${index + 1}</p>
-        <h4>${escapeHtml(step.title)}</h4>
-        <p class="solution-step-formula">${escapeHtml(step.formula || "")}</p>
-        <p class="solution-step-copy">${escapeHtml(step.explanation || "")}</p>
-      `;
+      const stepIndex = document.createElement("p");
+      stepIndex.className = "solution-step-index";
+      stepIndex.textContent = `Step ${index + 1}`;
+
+      const heading = document.createElement("h4");
+      heading.textContent = step.title;
+
+      const formula = document.createElement("div");
+      formula.className = "solution-step-formula";
+      formula.innerHTML = renderMathBlockHtml(step.formula || "", { displayMode: true });
+
+      const copy = document.createElement("div");
+      copy.className = "solution-step-copy";
+      copy.innerHTML = renderRichTextHtml(step.explanation || "");
+
+      item.append(stepIndex, heading, formula, copy);
       solutionDrawerSteps.appendChild(item);
     });
   }
@@ -1087,6 +1118,8 @@ function applySceneDirective(sceneDirective = null, { forceCamera = false } = {}
     analyticFormulaDismissed = false;
   }
   if (sceneDirective.revealFullSolution) {
+    analyticFormulaVisible = true;
+    analyticFullSolutionVisible = true;
     analyticFormulaDismissed = false;
   }
   renderAnalyticPanels(plan);
@@ -1317,6 +1350,7 @@ async function handleQuestionSubmit(overrides = {}) {
   if (!questionText && !imageFile) return;
   if (questionText && questionInput) {
     questionInput.value = questionText;
+    updateMathPreview(questionMathPreview, questionText);
   }
 
   tutorState.reset();
@@ -1476,7 +1510,10 @@ async function sendTutorMessage(messageText, options = {}) {
     syncStepFromTutorResponse(response, plan);
 
     if (response.completionState?.complete) {
-      completeLesson({ reason: response.completionState.reason || "correct-answer" });
+      completeLesson({
+        reason: response.completionState.reason || "correct-answer",
+        revealSolution: response.completionState.reason === "revealed-solution" || Boolean(response.sceneDirective?.revealFullSolution),
+      });
     }
 
     const actions = response.actions?.length ? response.actions : stageActionsForClient(plan, tutorState.latestAssessment);
@@ -1530,6 +1567,8 @@ async function handleComposerSubmit() {
   if (!text) return;
 
   chatInput.value = "";
+  updateMathPreview(chatMathPreview, "");
+  resizeChatComposer();
 
   if (tutorState.learningStage === "predict" && !tutorState.predictionState.submitted) {
     tutorState.submitPrediction(text);
@@ -1542,6 +1581,13 @@ async function handleComposerSubmit() {
     setCheckpointState(null);
     updateStageRail();
     announceCurrentStage(true);
+    return;
+  }
+
+  if (plan && isExplicitSolutionRequest(text)) {
+    addTranscriptMessage("user", text);
+    tutorState.addMessage("user", text);
+    revealWorkedSolution(plan);
     return;
   }
 
@@ -1839,15 +1885,7 @@ async function handleTutorAction(action = {}) {
       advanceLessonStage();
       break;
     case "reveal-full-solution":
-      analyticFormulaVisible = true;
-      analyticFullSolutionVisible = true;
-      analyticFormulaDismissed = false;
-      if (isAnalyticPlan(plan) && tutorState.currentStep < plan.lessonStages.length - 1) {
-        tutorState.goToStep(plan.lessonStages.length - 1);
-      }
-      applyAnalyticSceneState({ forceCamera: true });
-      renderAnalyticPanels(plan);
-      completeLesson({ reason: "correct-answer", revealSolution: true });
+      revealWorkedSolution(plan);
       break;
     case "reset-view":
       applyAnalyticSceneState({ forceCamera: true });
@@ -2037,7 +2075,13 @@ function bindEvents() {
     questionSection?.classList.remove("is-compact");
     if (questionInput) {
       questionInput.value = "";
+      updateMathPreview(questionMathPreview, "");
       questionInput.focus();
+    }
+    if (chatInput) {
+      chatInput.value = "";
+      updateMathPreview(chatMathPreview, "");
+      resizeChatComposer();
     }
   });
   lessonPanelToggle?.addEventListener("click", () => {
@@ -2078,7 +2122,7 @@ function bindEvents() {
   });
   chatSend?.addEventListener("click", handleComposerSubmit);
   chatInput?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
+    if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       handleComposerSubmit();
     }
@@ -2124,6 +2168,7 @@ function bindDom() {
   questionInput = document.getElementById("questionInput");
   questionSubmit = document.getElementById("questionSubmit");
   questionStatus = document.getElementById("questionStatus");
+  questionMathPreview = document.getElementById("questionMathPreview");
   questionImageInput = document.getElementById("questionImageInput");
   questionImageMeta = document.getElementById("questionImageMeta");
   questionImagePreview = document.getElementById("questionImagePreview");
@@ -2135,6 +2180,7 @@ function bindDom() {
   chatMessages = document.getElementById("chatMessages");
   chatInput = document.getElementById("chatInput");
   chatSend = document.getElementById("chatSend");
+  chatMathPreview = document.getElementById("chatMathPreview");
   voiceRecordBtn = document.getElementById("voiceRecordBtn");
   voiceStatus = document.getElementById("voiceStatus");
   stageRail = document.getElementById("stageRail");
@@ -2157,6 +2203,8 @@ function bindDom() {
   formulaCardCloseBtn = document.getElementById("formulaCardCloseBtn");
   solutionDrawer = document.getElementById("solutionDrawer");
   solutionDrawerTitle = document.getElementById("solutionDrawerTitle");
+  solutionDrawerAnswer = document.getElementById("solutionDrawerAnswer");
+  solutionDrawerAnswerValue = document.getElementById("solutionDrawerAnswerValue");
   solutionDrawerSteps = document.getElementById("solutionDrawerSteps");
   solutionDrawerClose = document.getElementById("solutionDrawerClose");
   newQuestionBtn = document.getElementById("newQuestionBtn");
@@ -2208,10 +2256,19 @@ export function initTutorController(context) {
   });
 
   questionInput?.addEventListener("input", () => {
+    updateMathPreview(questionMathPreview, questionInput.value);
     if (questionSection?.classList.contains("is-collapsed")) {
       setQuestionPanelCollapsed(true, { force: true });
     }
   });
+  chatInput?.addEventListener("input", () => {
+    resizeChatComposer();
+    updateMathPreview(chatMathPreview, chatInput.value);
+  });
+
+  resizeChatComposer();
+  updateMathPreview(questionMathPreview, questionInput?.value || "");
+  updateMathPreview(chatMathPreview, chatInput?.value || "");
 }
 
 export function updateTutorLabels() {

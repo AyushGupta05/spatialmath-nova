@@ -11,6 +11,7 @@
       rel="stylesheet"
     />
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="stylesheet" href="./node_modules/katex/dist/katex.min.css" />
     <link rel="stylesheet" href="./styles.css" />
     <script type="importmap">
       {
@@ -176,14 +177,18 @@
                     <button id="formulaCardCloseBtn" class="formula-card-dismiss" type="button">&times;</button>
                   </div>
                 </div>
-                <p id="formulaCardEquation" class="formula-card-equation"></p>
-                <p id="formulaCardExplanation" class="formula-card-copy"></p>
+                <div id="formulaCardEquation" class="formula-card-equation"></div>
+                <div id="formulaCardExplanation" class="formula-card-copy"></div>
               </section>
 
               <section id="solutionDrawer" class="solution-drawer hidden" aria-live="polite">
                 <div class="formula-card-head">
                   <h3 id="solutionDrawerTitle" class="formula-card-title">Worked Solution</h3>
                   <button id="solutionDrawerClose" class="formula-card-dismiss" type="button">&times;</button>
+                </div>
+                <div id="solutionDrawerAnswer" class="solution-drawer-answer hidden">
+                  <p class="solution-step-index">Final Answer</p>
+                  <div id="solutionDrawerAnswerValue" class="solution-drawer-answer-value"></div>
                 </div>
                 <div id="solutionDrawerSteps" class="solution-drawer-steps"></div>
               </section>
@@ -196,6 +201,7 @@
                     placeholder="Type a question or paste a diagram...&#10;e.g. &quot;What happens to the volume when you double the radius of a cylinder?&quot;"
                     rows="2"
                   ></textarea>
+                  <div id="questionMathPreview" class="composer-math-preview hidden" aria-live="polite"></div>
                   <div class="question-upload-row">
                     <label for="questionImageInput" id="questionImageTrigger" class="question-upload-btn">Attach Image</label>
                     <input id="questionImageInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
@@ -241,15 +247,15 @@
               <div class="chat-composer">
                 <div class="chat-input-wrap">
                   <button id="voiceRecordBtn" class="voice-mic-btn" type="button" aria-label="Voice input">&#127908;</button>
-                  <input
+                  <textarea
                     id="chatInput"
                     class="chat-input"
-                    type="text"
                     placeholder="What do you think happens next?"
-                    autocomplete="off"
-                  />
+                    rows="1"
+                  ></textarea>
                   <button id="chatSend" class="chat-send-btn" type="button">&#10148;</button>
                 </div>
+                <div id="chatMathPreview" class="composer-math-preview hidden" aria-live="polite"></div>
                 <p id="voiceStatus" class="voice-status-text hidden"></p>
               </div>
             </section>

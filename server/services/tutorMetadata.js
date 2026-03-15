@@ -150,8 +150,14 @@ export function buildTutorResponseMeta({
   userMessage = "",
 }) {
   const plan = normalizeScenePlan(planInput);
-  const stage = currentLessonStage(plan, learningState, contextStepId, assessment);
-  const sceneMoment = sceneMomentForStage(plan, stage?.id || null, learningState);
+  const revealSolution = completionState?.reason === "revealed-solution";
+  const fallbackStage = currentLessonStage(plan, learningState, contextStepId, assessment);
+  const stage = revealSolution && plan.experienceMode === "analytic_auto"
+    ? plan.lessonStages.at(-1) || fallbackStage
+    : fallbackStage;
+  const sceneMoment = revealSolution && plan.experienceMode === "analytic_auto"
+    ? plan.sceneMoments?.at(-1) || sceneMomentForStage(plan, stage?.id || null, learningState)
+    : sceneMomentForStage(plan, stage?.id || null, learningState);
   const representation = representationDirectiveForReply(plan, assessment, userMessage);
   const nextRequiredSuggestionIds = assessment?.guidance?.nextRequiredSuggestionIds || [];
   const focusTargets = plan.experienceMode === "analytic_auto"
@@ -194,8 +200,8 @@ export function buildTutorResponseMeta({
       focusTargets,
       visibleObjectIds: plan.experienceMode === "analytic_auto" ? (sceneMoment?.visibleObjectIds || []) : [],
       visibleOverlayIds: plan.experienceMode === "analytic_auto" ? (sceneMoment?.visibleOverlayIds || []) : [],
-      revealFormula: Boolean(plan.experienceMode === "analytic_auto" && sceneMoment?.revealFormula),
-      revealFullSolution: Boolean(plan.experienceMode === "analytic_auto" && sceneMoment?.revealFullSolution),
+      revealFormula: Boolean(plan.experienceMode === "analytic_auto" && (sceneMoment?.revealFormula || revealSolution)),
+      revealFullSolution: Boolean(plan.experienceMode === "analytic_auto" && (sceneMoment?.revealFullSolution || revealSolution)),
     },
   };
 }

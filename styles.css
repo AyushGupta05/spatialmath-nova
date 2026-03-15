@@ -346,6 +346,26 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 5px; }
   border-color: rgba(122, 247, 228, 0.4);
 }
 .question-input-wrap { display: grid; gap: 8px; }
+.composer-math-preview {
+  padding: 10px 12px;
+  border: 1px solid rgba(122, 247, 228, 0.12);
+  border-radius: 12px;
+  background: rgba(8, 18, 32, 0.58);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+.composer-math-preview::before {
+  content: "Math Preview";
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 .question-upload-row {
   display: flex;
   align-items: center;
@@ -1305,12 +1325,23 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 5px; }
   font-family: "Space Grotesk", sans-serif;
   font-size: 0.84rem;
   line-height: 1.45;
+  overflow-x: auto;
 }
 .formula-card-copy {
   margin: 0;
   color: var(--muted);
   font-size: 0.76rem;
   line-height: 1.45;
+}
+.solution-drawer-answer {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 217, 102, 0.16);
+  background: rgba(33, 26, 8, 0.34);
+}
+.solution-drawer-answer-value {
+  color: #fff5cc;
+  overflow-x: auto;
 }
 .solution-drawer-steps {
   display: grid;
@@ -1343,6 +1374,7 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 5px; }
   font-family: "Space Grotesk", sans-serif;
   font-size: 0.76rem;
   line-height: 1.4;
+  overflow-x: auto;
 }
 .solution-step-copy {
   margin: 0;
@@ -1436,6 +1468,34 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 5px; }
 .chat-msg-list strong {
   color: #ffffff;
   font-weight: 700;
+}
+.chat-msg-display-math {
+  margin: 0.18rem 0;
+  overflow-x: auto;
+}
+.chat-msg-paragraph .katex-display,
+.chat-msg-display-math .katex-display,
+.formula-card-equation .katex-display,
+.solution-step-formula .katex-display,
+.solution-drawer-answer-value .katex-display,
+.composer-math-preview .katex-display {
+  margin: 0.35rem 0;
+}
+.formula-card-copy .chat-msg-paragraph,
+.formula-card-copy .chat-msg-list li,
+.solution-step-copy .chat-msg-paragraph,
+.solution-step-copy .chat-msg-list li,
+.composer-math-preview .chat-msg-paragraph,
+.composer-math-preview .chat-msg-list li {
+  color: inherit;
+}
+.chat-msg-paragraph .katex,
+.chat-msg-display-math .katex,
+.formula-card-equation .katex,
+.solution-step-formula .katex,
+.solution-drawer-answer-value .katex,
+.composer-math-preview .katex {
+  font-size: 1em;
 }
 .chat-msg-list {
   margin: 0;
@@ -1541,13 +1601,17 @@ input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 5px; }
 .chat-input {
   flex: 1;
   min-width: 0;
-  height: 34px;
-  padding: 0 10px;
+  min-height: 34px;
+  max-height: 132px;
+  padding: 7px 10px;
   border: none;
   border-radius: 8px;
   background: transparent;
   color: var(--text);
   font-size: 0.8rem;
+  line-height: 1.4;
+  resize: none;
+  font-family: inherit;
 }
 .chat-input::placeholder { color: var(--muted); font-size: 0.76rem; }
 .chat-input:focus {
