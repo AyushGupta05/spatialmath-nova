@@ -17,6 +17,7 @@ import { CameraDirector } from "../render/cameraDirector.js";
 import { ElectricFieldManager } from "../render/electricFieldManager.js";
 import { supports2dCompanionShape } from "../ai/representationMode.js";
 import { tutorState } from "../state/tutorState.js";
+import { mergeRequiredSceneObjects, shouldSyncAnalyticScene } from "./sceneDirectiveSync.js";
 import { initUnfoldDrawer, setUnfoldRepresentationMode, syncUnfoldDrawer } from "./unfoldDrawer.js";
 import { MicrophoneCapture } from "./microphoneCapture.js";
 import { PcmAudioPlayer } from "./pcmAudioPlayer.js";
@@ -49,6 +50,7 @@ let electricFieldManager = null;
 let analyticFormulaVisible = false;
 let analyticFullSolutionVisible = false;
 let analyticFormulaDismissed = false;
+let lastAppliedAnalyticStageId = null;
 let similarQuestionRequest = null;
 let lastCompletionPromptKey = null;
 let stageWrapEl = null;
@@ -1043,11 +1045,32 @@ function applySceneDirective(sceneDirective = null, { forceCamera = false } = {}
   applyRepresentationDirective(sceneDirective);
   if (!isAnalyticPlan(plan)) return;
 
+  const stageId = sceneDirective.stageId || currentSceneMoment(plan)?.id || null;
   const visibleIds = sceneDirective.visibleObjectIds?.length
     ? sceneDirective.visibleObjectIds
     : currentSceneMoment(plan)?.visibleObjectIds || [];
-  const snapshot = buildSceneSnapshotFromSuggestions(plan, visibleIds);
-  sceneApi?.loadSnapshot?.(snapshot, "analytic-auto");
+  const requiredSnapshot = buildSceneSnapshotFromSuggestions(plan, visibleIds);
+  const snapshot = currentSnapshot();
+  const shouldSyncScene = shouldSyncAnalyticScene({
+    stageId,
+    lastAppliedStageId: lastAppliedAnalyticStageId,
+    snapshotObjects: snapshot.objects || [],
+    requiredObjects: requiredSnapshot.objects || [],
+  });
+
+  if (shouldSyncScene) {
+    const mergedObjects = mergeRequiredSceneObjects(snapshot.objects || [], requiredSnapshot.objects || []);
+    const selectedObjectId = (snapshot.selectedObjectId && mergedObjects.some((objectSpec) => objectSpec.id === snapshot.selectedObjectId))
+      ? snapshot.selectedObjectId
+      : (requiredSnapshot.selectedObjectId && mergedObjects.some((objectSpec) => objectSpec.id === requiredSnapshot.selectedObjectId))
+        ? requiredSnapshot.selectedObjectId
+        : null;
+    sceneApi?.loadSnapshot?.({
+      objects: mergedObjects,
+      selectedObjectId,
+    }, "analytic-auto");
+  }
+  lastAppliedAnalyticStageId = stageId;
   analyticOverlayManager?.render(plan, sceneDirective.visibleOverlayIds || []);
 
   const bookmark = (plan.cameraBookmarks || []).find((item) => item.id === sceneDirective.cameraBookmarkId);
@@ -1251,6 +1274,7 @@ function setPlan(plan, options = {}) {
   analyticFormulaVisible = false;
   analyticFullSolutionVisible = false;
   analyticFormulaDismissed = false;
+  lastAppliedAnalyticStageId = null;
   similarQuestionRequest = null;
   lastCompletionPromptKey = null;
   tutorState.setPlan(normalizedPlan, { mode: options.mode || normalizedPlan.problem?.mode || "guided" });
@@ -1997,6 +2021,7 @@ function bindEvents() {
     analyticFormulaVisible = false;
     analyticFullSolutionVisible = false;
     analyticFormulaDismissed = false;
+    lastAppliedAnalyticStageId = null;
     similarQuestionRequest = null;
     lastCompletionPromptKey = null;
     analyticOverlayManager?.clear();
